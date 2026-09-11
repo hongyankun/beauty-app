@@ -10,6 +10,11 @@
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) —— 目标架构、分层原则、数据与安全原则、目录规划
 - [docs/DECISIONS.md](docs/DECISIONS.md) —— 已确定的架构决策（ADR），不得随意推翻
 - [docs/ROADMAP.md](docs/ROADMAP.md) —— 阶段划分与待决策项
+- [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) —— 产品需求基线、业务规则、验收标准（PRD-XXX-NNN）、未决问题
+- [docs/INFORMATION_ARCHITECTURE.md](docs/INFORMATION_ARCHITECTURE.md) —— 页面树、页面清单与 Expo Router 路由规划
+
+@docs/PRODUCT_REQUIREMENTS.md
+@docs/INFORMATION_ARCHITECTURE.md
 
 # 执行规则
 
