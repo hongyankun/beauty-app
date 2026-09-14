@@ -4,7 +4,7 @@
 
 相关文档：[产品需求](./PRODUCT_REQUIREMENTS.md) · [项目简介](./PROJECT_BRIEF.md) · [架构](./ARCHITECTURE.md) · [决策记录](./DECISIONS.md) · [路线图](./ROADMAP.md)
 
-> **本文件只做规划，不创建任何 `src/` 下的路由文件。** 路由随功能开发逐步落地。
+> 第 4 节的目录规划随功能开发逐步落地。截至 R0 骨架阶段，已落地根布局、`(tabs)` 布局与五个 Tab 各自的 `_layout.tsx` + `index.tsx`，其余路由尚未创建。
 
 ---
 
@@ -332,9 +332,10 @@ App
 ```
 src/app/
 ├── _layout.tsx                          根 Stack（承载 Tab 组、全屏表单、认证层）
+├── index.tsx                            根路径入口，重定向到 /home
 │
 ├── (tabs)/
-│   ├── _layout.tsx                      Tabs 布局，五个一级入口
+│   ├── _layout.tsx                      Tabs 布局，五个一级入口，initialRouteName = home
 │   │
 │   ├── home/
 │   │   ├── _layout.tsx                  Stack
@@ -391,6 +392,12 @@ src/app/
     └── migrate.tsx                      本地数据迁移确认
 ```
 
+规划要点：
+
+- 五个 Tab 各自拥有一个 `_layout.tsx` 定义的独立 Stack，详情页压在所属 Tab 的栈内，不共用一个全局栈。
+- `catalog` 只是代码与路由的内部名称，界面上一律显示「百科」。
+- 原生冷启动时 Expo Router 会把初始路径固定为 `/`。由于首页位于 `home/` 而非 `(tabs)/index.tsx`，需要 `src/app/index.tsx` 把 `/` 指向 `/home`，`(tabs)/_layout.tsx` 同时设置 `initialRouteName = "home"`，两者共同保证默认启动进入首页。
+
 ### 4.1 第一阶段路由覆盖核对
 
 任务要求第一阶段至少覆盖以下路由，对照如下：
@@ -441,7 +448,7 @@ src/app/
 
 | 阶段 | 需要落地的路由 |
 | --- | --- |
-| R0 内部静态原型 | 五个 Tab 布局 + 第 4.1 节全部第一阶段路由，均以写死示例数据渲染 |
+| R0 内部静态原型 | 五个 Tab 布局 + 第 4.1 节全部第一阶段路由，均以写死示例数据渲染。当前已落地根路径入口、`(tabs)` 布局与五个 Tab 的 `index`，各 Tab 的详情与子页面待补 |
 | R1 本地业务闭环 | `home/index`、`records/*`、`purchase/*`、`redeem/*` 接本地持久化并跑通闭环；其余保持静态 |
 | R2 公开测试版 | `(auth)/*`、`me/data`、`me/account`、`me/feedback` |
 | R3 百科与心愿单增强 | `catalog/*`、`wishlist/*` 接真实内容与业务逻辑 |

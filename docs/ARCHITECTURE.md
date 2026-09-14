@@ -1,8 +1,8 @@
 # 架构（Architecture）
 
-> **本文件描述目标架构，本轮不实施。**
+> **本文件描述目标架构，尚未完整实施。**
 > 这里记录的是"将来要长成的样子"和"现在就必须遵守的原则"，不代表当前代码已经如此。
-> 当前代码仅为 Expo 模板 + 工程基线，尚无业务代码。
+> 当前代码处于 R0 骨架阶段：已落地设计 token、共享 UI 组件与五个一级 Tab 的路由骨架，尚无业务逻辑、持久化与网络层。
 
 相关文档：[项目简介](./PROJECT_BRIEF.md) · [决策记录](./DECISIONS.md) · [路线图](./ROADMAP.md)
 
@@ -91,7 +91,7 @@ SQLite           expo-sqlite，表、索引与迁移
 
 ## 六、推荐目录结构
 
-> 仅为规划，本轮**不创建**任何业务目录。目录随功能开发逐步落地。
+> 目录随功能开发逐步落地，不预先创建空目录。截至 R0 骨架阶段，已落地 `app/`、`components/`、`hooks/`、`theme/`。
 
 ```
 src/
@@ -101,9 +101,13 @@ src/
   services/    网络请求与外部接口封装
   storage/     SQLite 连接、迁移、repository 实现与离线队列
   hooks/       跨 feature 复用的 hooks
-  constants/   常量与设计 token
+  theme/       设计 token：颜色、间距、圆角、字体、阴影
   types/       共享类型定义
   utils/       无副作用的纯函数工具
 ```
+
+设计 token 放在 `theme/`，不放在 `constants/`。视觉语言以 [UI_REFERENCE.md](./UI_REFERENCE.md) 为准，`theme/` 是它在代码中的唯一落地位置，页面与组件不得另写字面量颜色或间距。
+
+`constants/` 只在未来确实出现非视觉常量（如枚举字面量、配置阈值）时才建立，不需要为了保留目录结构预先创建空的 `constants/`。
 
 判断代码该放哪里，用一个问题：**它被几个 feature 用？** 只被一个用，就放进那个 feature；被多个用，才提升到顶层目录。
