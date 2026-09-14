@@ -12,6 +12,7 @@
 - [docs/ROADMAP.md](docs/ROADMAP.md) —— 阶段划分与待决策项
 - [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) —— 产品需求基线、业务规则、验收标准（PRD-XXX-NNN）、未决问题
 - [docs/INFORMATION_ARCHITECTURE.md](docs/INFORMATION_ARCHITECTURE.md) —— 页面树、页面清单与 Expo Router 路由规划
+- [docs/UI_REFERENCE.md](docs/UI_REFERENCE.md) —— Fresh Mint 视觉语言：设计 Token、组件规则与禁止事项
 
 @docs/PRODUCT_REQUIREMENTS.md
 @docs/INFORMATION_ARCHITECTURE.md
@@ -50,3 +51,10 @@
 16. 所有用户可见文字默认使用简体中文。
 17. 不把 AI 描述为医生，不输出诊断或治疗承诺。
 18. 第一版不得引入照片、相机和相册功能。
+
+## UI
+
+19. 涉及界面的任务，动手前必须先读 [docs/UI_REFERENCE.md](docs/UI_REFERENCE.md)。
+20. 视觉语言（颜色、字体、间距、圆角、阴影、组件样式）以 [docs/UI_REFERENCE.md](docs/UI_REFERENCE.md) 为准。
+21. 功能与页面结构以 [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) 和 [docs/INFORMATION_ARCHITECTURE.md](docs/INFORMATION_ARCHITECTURE.md) 为准。
+22. 如三者冲突，不得自行判断，必须停止并询问。
