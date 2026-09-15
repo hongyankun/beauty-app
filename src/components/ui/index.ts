@@ -3,6 +3,11 @@ export { Button, type ButtonProps, type ButtonVariant } from './button';
 export { Card, type CardProps } from './card';
 export { Chip, ChipRow, type ChipProps, type ChipRowProps } from './chip';
 export { EmptyState, type EmptyStateProps } from './empty-state';
+export {
+  FullScreenStatus,
+  type FullScreenStatusProps,
+  type FullScreenStatusVariant,
+} from './full-screen-status';
 export { Icon, type IconName, type IconProps } from './icon';
 export { ListGroup, ListRow, type ListGroupProps, type ListRowProps } from './list-row';
 export { Screen, type ScreenProps } from './screen';
