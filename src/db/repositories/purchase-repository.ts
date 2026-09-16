@@ -2,6 +2,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import type { PurchaseRow } from '../types';
 import type {
+  PurchaseDeletionImpactRow,
   PurchaseItemContextRow,
   PurchaseItemDetailRow,
   PurchaseRepository,
@@ -105,6 +106,49 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
         [purchaseItemId, profileId],
       );
       return row ?? null;
+    },
+
+    async getDeletionImpact(purchaseId) {
+      // 两个子查询各算各的，理由同 `listSummaries`：JOIN 在一起会让项目数
+      // 被核销记录数放大。核销数**不过滤 status**——已撤销的记录同样会被删除。
+      const row = await db.getFirstAsync<PurchaseDeletionImpactRow>(
+        `SELECT
+            (SELECT COUNT(*)
+               FROM purchase_items i
+              WHERE i.purchase_id = ?) AS item_count,
+            (SELECT COUNT(*)
+               FROM redemption_records r
+               JOIN purchase_items i ON i.id = r.purchase_item_id
+              WHERE i.purchase_id = ?) AS redemption_count`,
+        [purchaseId, purchaseId],
+      );
+      return row ?? { item_count: 0, redemption_count: 0 };
+    },
+
+    async deletePermanently(profileId, purchaseId) {
+      // 子表**显式**按依赖顺序删除，不依赖 ON DELETE CASCADE。
+      //
+      // 原因见 run-in-transaction.ts：原生平台的独占事务跑在一条新连接上，
+      // 那条连接没有执行过 `PRAGMA foreign_keys = ON`（SQLite 默认关闭），
+      // 而进入 BEGIN 之后再设置该 PRAGMA 是静默无效的。此时删除套餐主记录
+      // 不会触发任何级联，会留下一堆读不到、也删不掉的孤儿项目与核销记录。
+      // 表上的 CASCADE 保留为声明式兜底：子行已经删空，级联再跑一次也是空操作。
+      await db.runAsync(
+        `DELETE FROM redemption_records
+          WHERE purchase_item_id IN (
+            SELECT i.id FROM purchase_items i WHERE i.purchase_id = ?
+          )`,
+        [purchaseId],
+      );
+      await db.runAsync(`DELETE FROM purchase_items WHERE purchase_id = ?`, [purchaseId]);
+
+      // 主记录带档案条件删除。它同时是这一组语句的守门人：档案不匹配时
+      // 这一句删不到行，调用方看到 0 会整体回滚，上面两句一并撤销。
+      const result = await db.runAsync(`DELETE FROM purchases WHERE id = ? AND profile_id = ?`, [
+        purchaseId,
+        profileId,
+      ]);
+      return result.changes;
     },
 
     async insert(row) {

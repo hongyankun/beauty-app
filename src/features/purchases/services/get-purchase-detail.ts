@@ -4,6 +4,7 @@ import {
   type DataAccess,
   type PurchaseItemCategory,
   type RedemptionStatus,
+  type UtcTimestamp,
 } from '@/db';
 
 /**
@@ -40,6 +41,10 @@ export type PurchaseDetailRedemption = {
   readonly city: string | null;
   readonly status: RedemptionStatus;
   readonly notes: string | null;
+  /** 撤销时间；仍然有效的记录为 null */
+  readonly voidedAt: UtcTimestamp | null;
+  /** 撤销原因；用户没填时为 null */
+  readonly voidReason: string | null;
 };
 
 export type PurchaseDetail = {
@@ -127,6 +132,8 @@ export async function getPurchaseDetail(
       city: row.city_snapshot,
       status: row.status,
       notes: row.notes,
+      voidedAt: row.voided_at,
+      voidReason: row.void_reason,
     })),
   };
 }

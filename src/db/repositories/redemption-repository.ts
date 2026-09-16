@@ -1,6 +1,10 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import type { RedemptionHistoryRow, RedemptionRepository } from './types';
+import type {
+  RedemptionContextRow,
+  RedemptionHistoryRow,
+  RedemptionRepository,
+} from './types';
 
 /**
  * 核销记录的 SQLite 实现。全部语句参数化绑定，不做任何字符串拼接。
@@ -36,13 +40,54 @@ export function createRedemptionRepository(db: SQLiteDatabase): RedemptionReposi
             r.city_snapshot,
             r.status,
             r.notes,
-            r.created_at
+            r.created_at,
+            r.voided_at,
+            r.void_reason
            FROM redemption_records r
            JOIN purchase_items i ON i.id = r.purchase_item_id
           WHERE i.purchase_id = ?
           ORDER BY r.redeemed_on DESC, r.created_at DESC`,
         [purchaseId],
       );
+    },
+
+    async findById(profileId, redemptionId) {
+      // 两次 JOIN：`purchase_items` 给项目名称，`purchases` 给档案归属。
+      // 少了后者这条查询就只是「按 ID 取一行」，任何档案的记录都能读到。
+      const row = await db.getFirstAsync<RedemptionContextRow>(
+        `SELECT
+            r.id,
+            r.purchase_item_id,
+            i.name AS item_name,
+            p.id   AS purchase_id,
+            r.redeemed_on,
+            r.status,
+            r.institution_name_snapshot,
+            r.city_snapshot
+           FROM redemption_records r
+           JOIN purchase_items i ON i.id = r.purchase_item_id
+           JOIN purchases p ON p.id = i.purchase_id
+          WHERE r.id = ? AND p.profile_id = ?
+          LIMIT 1`,
+        [redemptionId, profileId],
+      );
+      return row ?? null;
+    },
+
+    async voidById(redemptionId, voidedAt, voidReason) {
+      // `status = 'void'` 内联而不是绑定：撤销只有这一个目标状态，
+      // 做成参数等于允许调用方把记录改成任意状态。
+      // `voided_at` 与 `updated_at` 共用同一个时间戳——它们描述的是同一个动作。
+      const result = await db.runAsync(
+        `UPDATE redemption_records
+            SET status = 'void',
+                voided_at = ?,
+                void_reason = ?,
+                updated_at = ?
+          WHERE id = ? AND status = 'active'`,
+        [voidedAt, voidReason, voidedAt, redemptionId],
+      );
+      return result.changes;
     },
 
     async insert(row) {

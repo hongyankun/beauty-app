@@ -54,6 +54,17 @@ export type PurchaseSummaryRow = {
   readonly active_redemption_count: number;
 };
 
+/**
+ * 永久删除一个套餐会连带清除多少数据（PRD-PUR-009、E-08）。
+ *
+ * 核销记录数**包含已撤销的记录**：它们同样会随套餐一起消失，
+ * 确认框里少报一条都是误导。
+ */
+export type PurchaseDeletionImpactRow = {
+  readonly item_count: number;
+  readonly redemption_count: number;
+};
+
 export type PurchaseRepository = {
   /** 按购买日期倒序、同日按创建时间倒序返回全部套餐概览。 */
   listSummaries(profileId: string): Promise<PurchaseSummaryRow[]>;
@@ -69,6 +80,19 @@ export type PurchaseRepository = {
   listItemDetails(purchaseId: string): Promise<PurchaseItemDetailRow[]>;
   /** 读取单个项目及其所属套餐的机构与有效期，同时校验档案归属。 */
   findItemContext(profileId: string, purchaseItemId: string): Promise<PurchaseItemContextRow | null>;
+  /**
+   * 统计这个套餐名下的项目数与全部核销记录数（含已撤销）。
+   *
+   * 不带 `profileId`，同 `listItemDetails`：调用方先用 `findById` 确认归属。
+   */
+  getDeletionImpact(purchaseId: string): Promise<PurchaseDeletionImpactRow>;
+  /**
+   * 物理删除套餐及其项目与核销记录，返回被删除的**套餐**行数（正常为 1）。
+   *
+   * 机构与档案不在删除范围内（ADR-016、PRD-PUR-014）。
+   * 必须在事务内调用：实现会分多条语句清理子表。
+   */
+  deletePermanently(profileId: string, purchaseId: string): Promise<number>;
   insert(row: PurchaseRow): Promise<void>;
   insertItems(rows: readonly PurchaseItemRow[]): Promise<void>;
 };
@@ -121,6 +145,28 @@ export type RedemptionHistoryRow = {
   readonly status: RedemptionStatus;
   readonly notes: string | null;
   readonly created_at: UtcTimestamp;
+  /** 撤销时间；`status = 'active'` 时必为空（表级 CHECK 约束） */
+  readonly voided_at: UtcTimestamp | null;
+  /** 撤销原因，用户可以不填；不填时为 null，不编造默认原因 */
+  readonly void_reason: string | null;
+};
+
+/**
+ * 撤销核销所需的上下文：核销记录本身，加上它所属的项目与套餐。
+ *
+ * 一次查询同时回答三个问题：记录在不在、属不属于这个档案、现在是不是有效。
+ * 归属只能靠 JOIN 得到——`redemption_records` 与 `purchase_items` 都没有
+ * `profile_id`，唯一带档案列的是 `purchases`。
+ */
+export type RedemptionContextRow = {
+  readonly id: string;
+  readonly purchase_item_id: string;
+  readonly item_name: string;
+  readonly purchase_id: string;
+  readonly redeemed_on: BusinessDate;
+  readonly status: RedemptionStatus;
+  readonly institution_name_snapshot: string | null;
+  readonly city_snapshot: string | null;
 };
 
 export type RedemptionRepository = {
@@ -133,6 +179,21 @@ export type RedemptionRepository = {
   countActiveByItem(purchaseItemId: string): Promise<number>;
   /** 套餐下的全部核销记录，按核销日期倒序、同日按创建时间倒序。 */
   listByPurchase(purchaseId: string): Promise<RedemptionHistoryRow[]>;
+  /** 按 ID 读取一条核销及其项目与套餐，同时校验档案归属；不存在时返回 null。 */
+  findById(profileId: string, redemptionId: string): Promise<RedemptionContextRow | null>;
+  /**
+   * 把一条**仍然有效**的核销改为已撤销，返回实际更新的行数。
+   *
+   * 条件写在 SQL 里（`WHERE id = ? AND status = 'active'`）而不是只靠先读后判断：
+   * 读与写之间哪怕在同一个事务里，条件更新也是唯一能让「已经撤销过」
+   * 这件事以 0 行结果自证的方式。调用方必须校验返回值为 1，
+   * 否则余次会被重复恢复（任务书第六节）。
+   */
+  voidById(
+    redemptionId: string,
+    voidedAt: UtcTimestamp,
+    voidReason: string | null,
+  ): Promise<number>;
   insert(row: RedemptionRecordRow): Promise<void>;
 };
 
