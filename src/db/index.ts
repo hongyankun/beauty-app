@@ -17,6 +17,17 @@ export { LATEST_SCHEMA_VERSION, MIGRATIONS } from './migrations';
 
 export { DatabaseInitializationError, initializeDatabase } from './initialize-database';
 
+export { createDataAccess } from './repositories';
+
+export type {
+  DataAccess,
+  InstitutionOption,
+  InstitutionRepository,
+  PurchaseRepository,
+  PurchaseSummaryRow,
+  RepositoryBundle,
+} from './repositories';
+
 export type {
   BusinessDate,
   InstitutionRow,

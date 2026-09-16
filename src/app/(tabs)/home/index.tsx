@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
 
 import {
@@ -16,9 +17,12 @@ import { Layout } from '@/theme';
  * 视觉重点是「少而大」：两个关键数字 + 两个快捷入口 + 最近记录
  * （docs/UI_REFERENCE.md 第 13 章）。本任务不接数据，数值一律显示占位符，
  * 不虚构任何消费数据，也不做图表。
+ *
+ * 「添加套餐」已有真实页面，因此直接跳转；首页统计与「记录一次」仍是占位。
  */
 export default function HomeScreen() {
   const comingSoon = useComingSoon();
+  const router = useRouter();
 
   return (
     <Screen title="你好" subtitle="把每一次护理，都认真记录下来">
@@ -32,7 +36,7 @@ export default function HomeScreen() {
           label="添加套餐"
           icon="plus"
           variant="primary"
-          onPress={() => comingSoon('添加套餐')}
+          onPress={() => router.push('/purchase/new')}
         />
         <Button label="记录一次" icon="check" onPress={() => comingSoon('记录一次')} />
       </View>

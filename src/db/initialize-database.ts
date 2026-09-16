@@ -1,7 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
-import { Platform } from 'react-native';
 
 import { LATEST_SCHEMA_VERSION, MIGRATIONS } from './migrations';
+import { runInTransaction } from './run-in-transaction';
 import type { Migration } from './types';
 
 /**
@@ -30,32 +30,6 @@ export class DatabaseInitializationError extends Error {
     this.migrationVersion = options.migrationVersion;
     this.originalError = options.originalError;
   }
-}
-
-/**
- * 在事务中执行一段迁移。
- *
- * 原生平台使用 `withExclusiveTransactionAsync`：它在一条独占连接上执行，
- * 事务期间不会有范围外的 SQL 混进同一个事务。
- *
- * Web 上 expo-sqlite 明确不支持该 API（会直接抛错），而 Web 只是开发期辅助
- * 预览、不是 V1 发布平台（ADR-003），因此退化为 `withTransactionAsync`：
- * 同样有 BEGIN / COMMIT / ROLLBACK 保护，只是不独占连接。
- *
- * 注意：独占事务跑在新连接上，`PRAGMA foreign_keys` 不会从主连接继承，
- * 而进入 BEGIN 之后再设置该 PRAGMA 是静默无效的。所以迁移本身不能依赖
- * 外键强制执行——V1 的迁移只有 DDL 和一条固定的默认档案插入，不依赖。
- * 外键在主连接上开启，业务读写走的正是主连接。
- */
-async function runInTransaction(
-  db: SQLiteDatabase,
-  task: (txn: SQLiteDatabase) => Promise<void>,
-): Promise<void> {
-  if (Platform.OS === 'web') {
-    await db.withTransactionAsync(() => task(db));
-    return;
-  }
-  await db.withExclusiveTransactionAsync(task);
 }
 
 /** 读取当前数据库的 schema 版本。全新数据库为 0。 */
@@ -110,6 +84,10 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
 
   const pending = MIGRATIONS.filter((migration) => migration.version > currentVersion);
 
+  // 事务边界由 `runInTransaction` 提供。它在原生平台走独占事务，而独占事务跑在
+  // 新连接上、不继承上面那句 `PRAGMA foreign_keys`，所以迁移本身不能依赖外键
+  // 强制执行——V1 的迁移只有 DDL 和一条固定的默认档案插入，不依赖。
+  // 外键在主连接上开启，业务读写走的正是主连接。
   for (const migration of pending) {
     try {
       await runInTransaction(db, async (txn) => {

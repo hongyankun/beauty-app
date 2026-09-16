@@ -1,4 +1,12 @@
-import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { Icon, type IconName } from './icon';
 import { BorderWidth, Colors, Layout, Radii, Spacing, TextStyles } from '@/theme';
@@ -14,6 +22,12 @@ export type ButtonProps = {
   disabled?: boolean;
   /** 禁用时必须说明原因，不能只靠降低不透明度 */
   disabledReason?: string;
+  /**
+   * 进行中：按钮内显示指示器并自动禁用，防止重复提交
+   * （docs/UI_REFERENCE.md 第 10 章、PRD-RED-005）。
+   * 进行中的文案由 `label` 承担，例如「正在保存…」，不只靠指示器表达状态。
+   */
+  loading?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -24,26 +38,29 @@ export function Button({
   icon,
   disabled = false,
   disabledReason,
+  loading = false,
   style,
 }: ButtonProps) {
   const contentColor = CONTENT_COLORS[variant];
+  const isInteractive = !disabled && !loading;
 
   return (
     <View style={style}>
       <Pressable
         onPress={onPress}
-        disabled={disabled}
+        disabled={!isInteractive}
         accessibilityRole="button"
         accessibilityLabel={label}
-        accessibilityState={{ disabled }}
+        accessibilityState={{ disabled: !isInteractive, busy: loading }}
         style={({ pressed }) => [
           styles.base,
           VARIANT_STYLES[variant],
-          pressed && !disabled ? styles.pressed : null,
-          disabled ? styles.disabled : null,
+          pressed && isInteractive ? styles.pressed : null,
+          !isInteractive ? styles.disabled : null,
         ]}
       >
-        {icon ? <Icon name={icon} size={20} color={contentColor} /> : null}
+        {loading ? <ActivityIndicator size="small" color={contentColor} /> : null}
+        {icon && !loading ? <Icon name={icon} size={20} color={contentColor} /> : null}
         <Text style={[styles.label, { color: contentColor }]} numberOfLines={1}>
           {label}
         </Text>

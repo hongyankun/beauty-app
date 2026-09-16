@@ -78,6 +78,20 @@ export const TextStyles = {
     fontWeight: '400',
     lineHeight: 18,
   },
+  /**
+   * 列表内的数值，衬线体，只用于数字。
+   *
+   * `statValue` 的 30pt 用在列表卡片里过重，但 UI_REFERENCE 第 4.1 节要求
+   * 列表中的金额与次数使用衬线体并纵向对齐，因此需要一个正文量级的数值样式。
+   * 仍属于「数字强调」这一个角色，不构成第三种字体。
+   */
+  numeric: {
+    fontFamily: FontFamily.serifNumeric,
+    fontSize: FontSize.sectionTitle,
+    fontWeight: '400',
+    lineHeight: 24,
+    fontVariant: ['tabular-nums'],
+  },
   /** 关键统计数值，衬线体，只用于数字 */
   statValue: {
     fontFamily: FontFamily.serifNumeric,

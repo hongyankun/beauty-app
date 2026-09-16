@@ -36,6 +36,8 @@ const ICONS = {
   dataExport: { ios: 'arrow.down.doc', android: 'description', web: 'description' },
   privacy: { ios: 'lock.shield', android: 'lock', web: 'lock' },
   about: { ios: 'info.circle', android: 'info', web: 'info' },
+  trash: { ios: 'trash', android: 'delete', web: 'delete' },
+  warning: { ios: 'exclamationmark.triangle', android: 'warning', web: 'warning' },
 } satisfies Record<string, SymbolName>;
 
 export type IconName = keyof typeof ICONS;

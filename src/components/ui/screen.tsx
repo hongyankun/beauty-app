@@ -9,6 +9,14 @@ export type ScreenProps = {
   title: string;
   /** 标题下的一句说明，可省略 */
   subtitle?: string;
+  /**
+   * 内容区是否由 Screen 自己滚动，默认是。
+   *
+   * 置为 false 时 Screen 只负责标题与边距，内容区交给调用方填满剩余高度。
+   * 长列表页需要这样做：列表必须是 `FlatList` 才能在数百个套餐下保持流畅
+   * （PRD-NFR-007），而把 `FlatList` 套进 `ScrollView` 会让它退化成一次性全量渲染。
+   */
+  scrollable?: boolean;
   children: ReactNode;
 };
 
@@ -17,8 +25,26 @@ export type ScreenProps = {
  *
  * 五个 Tab 页面共用同一套标题排版，保证横向切换时标题位置不跳动。
  */
-export function Screen({ title, subtitle, children }: ScreenProps) {
+export function Screen({ title, subtitle, scrollable = true, children }: ScreenProps) {
   const insets = useSafeAreaInsets();
+
+  const header = (
+    <View style={styles.header} accessibilityRole="header">
+      <Text style={styles.title}>{title}</Text>
+      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+    </View>
+  );
+
+  if (!scrollable) {
+    return (
+      <View style={styles.root}>
+        <View style={[styles.content, styles.staticContent, { paddingTop: insets.top + Spacing.lg }]}>
+          {header}
+          {children}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -27,10 +53,7 @@ export function Screen({ title, subtitle, children }: ScreenProps) {
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.lg }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header} accessibilityRole="header">
-          <Text style={styles.title}>{title}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-        </View>
+        {header}
         {children}
       </ScrollView>
     </View>
@@ -49,6 +72,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Layout.pageHorizontal,
     paddingBottom: Spacing.xxxl,
     gap: Layout.sectionGap,
+  },
+  staticContent: {
+    // 不滚动时由内容区填满剩余高度；底部留白交给内部的列表与固定操作区，
+    // 否则固定在底部的主按钮会被这里的 paddingBottom 顶起来。
+    flex: 1,
+    paddingBottom: 0,
   },
   header: {
     gap: Layout.tightGap,
