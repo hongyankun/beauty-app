@@ -43,9 +43,19 @@ export function PurchaseListScreen() {
     setFilter('all');
   }, []);
 
+  const openDetail = useCallback(
+    (purchaseId: string) => {
+      // 详情压在记录 Tab 自己的栈里，保留 Tab 栏（IA 第 4.3 节第 2 条）。
+      router.push(`/(tabs)/records/${purchaseId}`);
+    },
+    [router],
+  );
+
   const renderItem = useCallback(
-    ({ item }: { item: PurchaseSummary }) => <PurchaseCard summary={item} />,
-    [],
+    ({ item }: { item: PurchaseSummary }) => (
+      <PurchaseCard summary={item} onPress={openDetail} />
+    ),
+    [openDetail],
   );
 
   const firstLoad = status === 'loading' && summaries.length === 0;

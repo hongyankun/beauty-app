@@ -28,6 +28,13 @@ export type ButtonProps = {
    * 进行中的文案由 `label` 承担，例如「正在保存…」，不只靠指示器表达状态。
    */
   loading?: boolean;
+  /**
+   * 覆盖读屏标签。
+   *
+   * 同一屏里出现多个同名按钮时必须给出（例如详情页每个项目都有一个「核销一次」），
+   * 否则读屏用户听到的全是同一句话，分不清在操作哪一项。
+   */
+  accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -39,6 +46,7 @@ export function Button({
   disabled = false,
   disabledReason,
   loading = false,
+  accessibilityLabel,
   style,
 }: ButtonProps) {
   const contentColor = CONTENT_COLORS[variant];
@@ -50,7 +58,10 @@ export function Button({
         onPress={onPress}
         disabled={!isInteractive}
         accessibilityRole="button"
-        accessibilityLabel={label}
+        accessibilityLabel={
+          accessibilityLabel ??
+          (disabled && disabledReason ? `${label}，${disabledReason}` : label)
+        }
         accessibilityState={{ disabled: !isInteractive, busy: loading }}
         style={({ pressed }) => [
           styles.base,

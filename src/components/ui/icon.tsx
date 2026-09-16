@@ -24,6 +24,7 @@ const ICONS = {
   search: { ios: 'magnifyingglass', android: 'search', web: 'search' },
   plus: { ios: 'plus', android: 'add', web: 'add' },
   chevronRight: { ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' },
+  chevronLeft: { ios: 'chevron.left', android: 'chevron_left', web: 'chevron_left' },
   check: { ios: 'checkmark', android: 'check', web: 'check' },
   inbox: { ios: 'tray', android: 'inbox', web: 'inbox' },
   bookmark: { ios: 'bookmark', android: 'bookmark', web: 'bookmark' },

@@ -1,6 +1,12 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import type { PurchaseRepository, PurchaseSummaryRow } from './types';
+import type { PurchaseRow } from '../types';
+import type {
+  PurchaseItemContextRow,
+  PurchaseItemDetailRow,
+  PurchaseRepository,
+  PurchaseSummaryRow,
+} from './types';
 
 /**
  * 套餐与套餐项目的 SQLite 实现。全部语句参数化绑定。
@@ -39,6 +45,66 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
           ORDER BY p.purchase_date DESC, p.created_at DESC`,
         [profileId],
       );
+    },
+
+    async findById(profileId, purchaseId) {
+      const row = await db.getFirstAsync<PurchaseRow>(
+        `SELECT id, profile_id, institution_id, institution_name_snapshot, city_snapshot,
+                name, purchase_date, total_amount_minor, currency, expires_on, notes,
+                created_at, updated_at
+           FROM purchases
+          WHERE profile_id = ? AND id = ?
+          LIMIT 1`,
+        [profileId, purchaseId],
+      );
+      return row ?? null;
+    },
+
+    async listItemDetails(purchaseId) {
+      // 项目按录入顺序排列（任务书第六节：created_at 升序）。同一个套餐的项目是
+      // 在一个事务里用同一个时间戳批量插入的，created_at 完全相同，单靠它排序
+      // 顺序不稳定，因此再用隐式 rowid 兜底——rowid 就是插入顺序。
+      return db.getAllAsync<PurchaseItemDetailRow>(
+        `SELECT
+            i.id,
+            i.name,
+            i.category,
+            i.quantity,
+            i.unit_amount_minor,
+            i.notes,
+            i.created_at,
+            (SELECT COUNT(*)
+               FROM redemption_records r
+              WHERE r.purchase_item_id = i.id AND r.status = 'active') AS active_redemption_count
+           FROM purchase_items i
+          WHERE i.purchase_id = ?
+          ORDER BY i.created_at ASC, i.rowid ASC`,
+        [purchaseId],
+      );
+    },
+
+    async findItemContext(profileId, purchaseItemId) {
+      // JOIN 套餐既是为了拿有效期与机构快照，也是这条查询唯一的档案归属校验点：
+      // purchase_items 自己没有 profile_id。
+      const row = await db.getFirstAsync<PurchaseItemContextRow>(
+        `SELECT
+            i.id,
+            i.name,
+            i.quantity,
+            p.id   AS purchase_id,
+            p.name AS purchase_name,
+            p.purchase_date,
+            p.expires_on,
+            p.institution_id,
+            p.institution_name_snapshot,
+            p.city_snapshot
+           FROM purchase_items i
+           JOIN purchases p ON p.id = i.purchase_id
+          WHERE i.id = ? AND p.profile_id = ?
+          LIMIT 1`,
+        [purchaseItemId, profileId],
+      );
+      return row ?? null;
     },
 
     async insert(row) {

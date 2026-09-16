@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/ui';
 import { Colors, Layout, Radii, Spacing, TextStyles } from '@/theme';
@@ -7,6 +7,8 @@ import type { PurchaseSummary } from '../services/list-purchases';
 
 export type PurchaseCardProps = {
   summary: PurchaseSummary;
+  /** 点击进入套餐详情。不传时卡片只做展示，不可点击 */
+  onPress?: (purchaseId: string) => void;
 };
 
 /**
@@ -21,7 +23,7 @@ export type PurchaseCardProps = {
  * 有效期本轮只展示不参与筛选，因此这里只在有值时原样陈述日期，
  * 不计算「临期」「已过期」——那需要与筛选口径一起定义，属于后续任务。
  */
-export function PurchaseCard({ summary }: PurchaseCardProps) {
+export function PurchaseCard({ summary, onPress }: PurchaseCardProps) {
   const usedUp = summary.remaining === 0;
 
   const meta = [
@@ -31,7 +33,7 @@ export function PurchaseCard({ summary }: PurchaseCardProps) {
     `共 ${summary.totalQuantity} 次`,
   ].filter((part): part is string => part !== null);
 
-  return (
+  const content = (
     <Card style={styles.card}>
       <View style={styles.header}>
         <Text style={styles.name} numberOfLines={2}>
@@ -55,11 +57,33 @@ export function PurchaseCard({ summary }: PurchaseCardProps) {
       </View>
     </Card>
   );
+
+  if (!onPress) {
+    return content;
+  }
+
+  // 整张卡片就是触控区，远超 44×44pt（UI_REFERENCE 第 14 章）。
+  // 读屏标签把卡片里分散的几行信息合成一句话，否则用户要逐条划过才知道这是什么。
+  return (
+    <Pressable
+      onPress={() => onPress(summary.id)}
+      accessibilityRole="button"
+      accessibilityLabel={`${summary.name}，${
+        usedUp ? '已用完' : `剩余 ${summary.remaining} 次`
+      }，${summary.purchaseDate} 购买，查看详情`}
+      style={({ pressed }) => (pressed ? styles.pressed : null)}
+    >
+      {content}
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
   card: {
     gap: Layout.tightGap,
+  },
+  pressed: {
+    opacity: 0.7,
   },
   header: {
     flexDirection: 'row',

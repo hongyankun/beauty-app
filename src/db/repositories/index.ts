@@ -4,7 +4,11 @@ export type {
   DataAccess,
   InstitutionOption,
   InstitutionRepository,
+  PurchaseItemContextRow,
+  PurchaseItemDetailRow,
   PurchaseRepository,
   PurchaseSummaryRow,
+  RedemptionHistoryRow,
+  RedemptionRepository,
   RepositoryBundle,
 } from './types';

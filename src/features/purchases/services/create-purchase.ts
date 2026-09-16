@@ -3,16 +3,14 @@ import {
   DEFAULT_PROFILE_ID,
   type BusinessDate,
   type DataAccess,
-  type InstitutionRow,
   type PurchaseItemCategory,
   type PurchaseItemRow,
-  type RepositoryBundle,
 } from '@/db';
 import { compareBusinessDates, isBusinessDate } from '@/utils/business-date';
-import { cleanInstitutionName, normalizeInstitutionName } from '@/utils/institution-name';
 import { MAX_AMOUNT_MINOR } from '@/utils/money';
 import { createUuid } from '@/utils/uuid';
 import { PurchaseServiceError } from './errors';
+import { resolveInstitution, type InstitutionSelection } from './institution-selection';
 
 /**
  * 新增套餐用例。
@@ -21,11 +19,9 @@ import { PurchaseServiceError } from './errors';
  * 任意一步失败全部回滚，不会留下半个套餐（ARCHITECTURE 第三节、任务书第七节）。
  */
 
-/** 机构的三种选择方式。第一版套餐机构允许不填（PRD 第 6.1 节 institutionId 非必填）。 */
-export type InstitutionSelection =
-  | { readonly kind: 'none' }
-  | { readonly kind: 'existing'; readonly institutionId: string }
-  | { readonly kind: 'new'; readonly name: string };
+// 机构选择的类型与解析规则由 `institution-selection` 统一提供，核销共用同一份。
+// 这里继续导出类型，是为了不让表单层关心它具体来自哪个文件。
+export type { InstitutionSelection };
 
 export type CreatePurchaseItemInput = {
   readonly name: string;
@@ -90,65 +86,6 @@ function assertInputIsValid(input: CreatePurchaseInput): void {
       '单次金额不在可保存的范围内',
     );
   }
-}
-
-/**
- * 在事务内把机构选择落成一条真实的机构行。
- *
- * 「新机构」走 ADR-014 的基础清洗 + `normalized_name` 判重：
- * 同一档案内已有同名机构就复用，不重复创建（PRD-INST-002、PRD-INST-003）。
- * 查找与插入都在同一个事务里，两次快速保存同一个新机构不会各插一条。
- */
-async function resolveInstitution(
-  repositories: RepositoryBundle,
-  selection: InstitutionSelection,
-  city: string | null,
-  now: string,
-): Promise<InstitutionRow | null> {
-  if (selection.kind === 'none') {
-    return null;
-  }
-
-  if (selection.kind === 'existing') {
-    // 独占事务不继承 `PRAGMA foreign_keys`，外键不一定会拦住悬空引用，
-    // 所以这里自己查一次，确认机构确实存在且属于当前档案。
-    const existing = await repositories.institutions.findById(
-      DEFAULT_PROFILE_ID,
-      selection.institutionId,
-    );
-    if (existing === null) {
-      throw new PurchaseServiceError('选中的机构已不存在，请重新选择');
-    }
-    return existing;
-  }
-
-  const name = cleanInstitutionName(selection.name);
-  if (name === '') {
-    throw new PurchaseServiceError('请填写机构名称，或选择不填写机构');
-  }
-
-  const normalizedName = normalizeInstitutionName(name);
-  const reusable = await repositories.institutions.findByNormalizedName(
-    DEFAULT_PROFILE_ID,
-    normalizedName,
-  );
-  if (reusable !== null) {
-    return reusable;
-  }
-
-  const created: InstitutionRow = {
-    id: createUuid(),
-    profile_id: DEFAULT_PROFILE_ID,
-    name,
-    normalized_name: normalizedName,
-    city,
-    notes: null,
-    is_archived: 0,
-    created_at: now,
-    updated_at: now,
-  };
-  await repositories.institutions.insert(created);
-  return created;
 }
 
 /**
