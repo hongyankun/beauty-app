@@ -1,67 +1,11 @@
-import { useRouter } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
-
-import {
-  Button,
-  EmptyState,
-  Screen,
-  SectionHeader,
-  StatCard,
-} from '@/components/ui';
-import { useComingSoon } from '@/hooks/use-coming-soon';
-import { Layout } from '@/theme';
+import { HomeScreen } from '@/features/home/screens/home-screen';
 
 /**
- * 首页总览（静态骨架）。
+ * 路由 `/(tabs)/home`：首页总览。
  *
- * 视觉重点是「少而大」：两个关键数字 + 两个快捷入口 + 最近记录
- * （docs/UI_REFERENCE.md 第 13 章）。本任务不接数据，数值一律显示占位符，
- * 不虚构任何消费数据，也不做图表。
- *
- * 「添加套餐」已有真实页面，因此直接跳转；首页统计与「记录一次」仍是占位。
+ * `src/app` 只放路由（ARCHITECTURE 第六节），页面实现在 feature 里。
+ * 消费统计（`home/stats`）属于 R4，本阶段不建。
  */
-export default function HomeScreen() {
-  const comingSoon = useComingSoon();
-  const router = useRouter();
-
-  return (
-    <Screen title="你好" subtitle="把每一次护理，都认真记录下来">
-      <View style={styles.statRow}>
-        <StatCard label="待使用次数" value="—" unit="次" hint="录入套餐后自动计算" />
-        <StatCard label="累计投入" value="—" hint="按购买金额统计" />
-      </View>
-
-      <View style={styles.actions}>
-        <Button
-          label="添加套餐"
-          icon="plus"
-          variant="primary"
-          onPress={() => router.push('/purchase/new')}
-        />
-        <Button label="记录一次" icon="check" onPress={() => comingSoon('记录一次')} />
-      </View>
-
-      <View style={styles.section}>
-        <SectionHeader title="最近记录" />
-        <EmptyState
-          icon="inbox"
-          title="还没有记录"
-          description="完成第一次记录后，这里会显示最近做过的项目。"
-        />
-      </View>
-    </Screen>
-  );
+export default function HomeRoute() {
+  return <HomeScreen />;
 }
-
-const styles = StyleSheet.create({
-  statRow: {
-    flexDirection: 'row',
-    gap: Layout.cardGap,
-  },
-  actions: {
-    gap: Layout.cardGap,
-  },
-  section: {
-    gap: Layout.cardGap,
-  },
-});

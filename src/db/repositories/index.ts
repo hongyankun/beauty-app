@@ -1,6 +1,8 @@
 /** repository 层出口。上层只从 `@/db` 导入，不直接引用具体实现文件。 */
 export { createDataAccess } from './data-access';
 export type {
+  DashboardRepository,
+  DashboardTotalsRow,
   DataAccess,
   InstitutionOption,
   InstitutionRepository,
@@ -9,6 +11,8 @@ export type {
   PurchaseItemDetailRow,
   PurchaseRepository,
   PurchaseSummaryRow,
+  RecentRedemptionRow,
+  RedeemableItemRow,
   RedemptionContextRow,
   RedemptionHistoryRow,
   RedemptionRepository,

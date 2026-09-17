@@ -65,9 +65,34 @@ export type PurchaseDeletionImpactRow = {
   readonly redemption_count: number;
 };
 
+/**
+ * 快捷核销选择页的一个候选项目：项目 + 它所属套餐的展示信息。
+ *
+ * 与其他行一样不含 `remaining`：`quantity` 与 `active_redemption_count` 分开返回，
+ * 余次由 service 派生（ADR-013）。SQL 只用这两列做「还有余次」的过滤，
+ * 不把派生结果当成一列查出来。
+ */
+export type RedeemableItemRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly quantity: number;
+  readonly active_redemption_count: number;
+  readonly purchase_id: string;
+  readonly purchase_name: string;
+  readonly institution_name_snapshot: string | null;
+  readonly city_snapshot: string | null;
+  readonly expires_on: BusinessDate | null;
+};
+
 export type PurchaseRepository = {
   /** 按购买日期倒序、同日按创建时间倒序返回全部套餐概览。 */
   listSummaries(profileId: string): Promise<PurchaseSummaryRow[]>;
+  /**
+   * 当前档案下**仍有剩余次数**的全部项目，按有效期先后排序。
+   *
+   * 过期的项目照样返回：有效期不影响余次，也不禁止核销（ADR-017、PRD-RED-014）。
+   */
+  listRedeemableItems(profileId: string): Promise<RedeemableItemRow[]>;
   /** 按 ID 读取单个套餐，同时校验归属于该档案；不存在时返回 null。 */
   findById(profileId: string, purchaseId: string): Promise<PurchaseRow | null>;
   /**
@@ -197,11 +222,57 @@ export type RedemptionRepository = {
   insert(row: RedemptionRecordRow): Promise<void>;
 };
 
+/**
+ * 首页两张统计卡的聚合结果，一次查询返回一行。
+ *
+ * 三个数字各自独立：`total_quantity` 是买了多少次，`active_redemption_count`
+ * 是用掉多少次，两者相减才是「待使用」。相减放在 service 做，
+ * 因为负值需要被夹到 0，而那是业务判断不是存储判断（E-05）。
+ */
+export type DashboardTotalsRow = {
+  /** 全部套餐项目的购买次数之和 */
+  readonly total_quantity: number;
+  /** 全部有效核销数（只数 `status = 'active'`） */
+  readonly active_redemption_count: number;
+  /** 全部套餐总价之和，整数分 */
+  readonly total_amount_minor: number;
+};
+
+/**
+ * 首页「最近记录」里的一条有效核销。
+ *
+ * 只返回展示与跳转需要的列：已撤销的记录不会出现在这里，
+ * 所以不带 `status`、`voided_at`，避免上层误以为还要自己过滤。
+ */
+export type RecentRedemptionRow = {
+  readonly id: string;
+  readonly purchase_item_id: string;
+  readonly item_name: string;
+  readonly purchase_id: string;
+  readonly purchase_name: string;
+  readonly redeemed_on: BusinessDate;
+  readonly institution_name_snapshot: string | null;
+  readonly city_snapshot: string | null;
+};
+
+export type DashboardRepository = {
+  /** 首页两张统计卡所需的三个总数，一条 SQL 聚合完成。 */
+  getTotals(profileId: string): Promise<DashboardTotalsRow>;
+  /**
+   * 最近的有效核销，按核销日期倒序、同日按创建时间倒序，最多 `limit` 条。
+   *
+   * 已撤销的记录与已被永久删除的套餐下的记录都不会出现：前者由
+   * `status = 'active'` 排除，后者在删除时已连同记录一起物理消失（ADR-016）。
+   */
+  listRecentRedemptions(profileId: string, limit: number): Promise<RecentRedemptionRow[]>;
+};
+
 /** 一组绑定在同一个连接（或同一个事务）上的 repository。 */
 export type RepositoryBundle = {
   readonly institutions: InstitutionRepository;
   readonly purchases: PurchaseRepository;
   readonly redemptions: RedemptionRepository;
+  readonly dashboard: DashboardRepository;
 };
 
 /**

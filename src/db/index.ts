@@ -20,6 +20,8 @@ export { DatabaseInitializationError, initializeDatabase } from './initialize-da
 export { createDataAccess } from './repositories';
 
 export type {
+  DashboardRepository,
+  DashboardTotalsRow,
   DataAccess,
   InstitutionOption,
   InstitutionRepository,
@@ -28,6 +30,8 @@ export type {
   PurchaseItemDetailRow,
   PurchaseRepository,
   PurchaseSummaryRow,
+  RecentRedemptionRow,
+  RedeemableItemRow,
   RedemptionContextRow,
   RedemptionHistoryRow,
   RedemptionRepository,

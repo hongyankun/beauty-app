@@ -7,6 +7,7 @@ import type {
   PurchaseItemDetailRow,
   PurchaseRepository,
   PurchaseSummaryRow,
+  RedeemableItemRow,
 } from './types';
 
 /**
@@ -44,6 +45,47 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
            FROM purchases p
           WHERE p.profile_id = ?
           ORDER BY p.purchase_date DESC, p.created_at DESC`,
+        [profileId],
+      );
+    },
+
+    async listRedeemableItems(profileId) {
+      // 「还有余次」= 购买次数 > 有效核销数。判断写在 SQL 里，但两个数各自
+      // 独立返回，上层仍然自己派生 remaining——库里没有也不会有 remaining 列。
+      //
+      // 核销数用一个预聚合子查询 LEFT JOIN 进来，而不是相关子查询：这条语句
+      // 要对全档案的项目做过滤与排序，预聚合只扫一遍 redemption_records
+      // （命中 idx_redemptions_item_status），相关子查询则是每个项目扫一次。
+      // 从未核销过的项目在子查询里没有对应行，COALESCE 兜成 0。
+      //
+      // 排序（任务书第五节）：有有效期的排在前面、越早越靠前；没有有效期的
+      // 统一排在后面；同有效期按套餐购买日期倒序；最后按项目录入顺序。
+      // rowid 兜底的理由同 listItemDetails——同批项目 created_at 完全相同。
+      return db.getAllAsync<RedeemableItemRow>(
+        `SELECT
+            i.id,
+            i.name,
+            i.quantity,
+            COALESCE(rc.active_count, 0) AS active_redemption_count,
+            p.id   AS purchase_id,
+            p.name AS purchase_name,
+            p.institution_name_snapshot,
+            p.city_snapshot,
+            p.expires_on
+           FROM purchase_items i
+           JOIN purchases p ON p.id = i.purchase_id
+           LEFT JOIN (
+             SELECT purchase_item_id, COUNT(*) AS active_count
+               FROM redemption_records
+              WHERE status = 'active'
+              GROUP BY purchase_item_id
+           ) rc ON rc.purchase_item_id = i.id
+          WHERE p.profile_id = ? AND i.quantity > COALESCE(rc.active_count, 0)
+          ORDER BY (p.expires_on IS NULL) ASC,
+                   p.expires_on ASC,
+                   p.purchase_date DESC,
+                   i.created_at ASC,
+                   i.rowid ASC`,
         [profileId],
       );
     },

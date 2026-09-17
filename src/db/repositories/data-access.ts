@@ -1,6 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { runInTransaction } from '../run-in-transaction';
+import { createDashboardRepository } from './dashboard-repository';
 import { createInstitutionRepository } from './institution-repository';
 import { createPurchaseRepository } from './purchase-repository';
 import { createRedemptionRepository } from './redemption-repository';
@@ -12,6 +13,7 @@ function createRepositoryBundle(db: SQLiteDatabase): RepositoryBundle {
     institutions: createInstitutionRepository(db),
     purchases: createPurchaseRepository(db),
     redemptions: createRedemptionRepository(db),
+    dashboard: createDashboardRepository(db),
   };
 }
 
