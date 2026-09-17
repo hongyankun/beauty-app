@@ -88,6 +88,13 @@ export function PurchaseDetailScreen() {
     [router, purchaseId],
   );
 
+  const openEdit = useCallback(() => {
+    // 编辑页挂在根 Stack 上，覆盖 Tab 栏（IA 第 4.3 节第 1 条）。
+    // 用 push 而不是 replace：保存或取消后 back 回来的就是这个详情页，
+    // 它在重新获得焦点时会重读，展示的是刚保存的内容。
+    router.push({ pathname: '/purchase/[purchaseId]/edit', params: { purchaseId } });
+  }, [router, purchaseId]);
+
   const openVoid = useCallback((redemption: PurchaseDetailRedemption) => {
     // 换一条记录才清空原因。同一条记录取消后重新打开，用户写过的字还在
     // （任务书第五节：失败或取消都不丢输入）。
@@ -255,6 +262,18 @@ export function PurchaseDetailScreen() {
             ) : null}
 
             <PurchaseSummaryCard detail={detail} />
+
+            {/*
+              编辑入口紧跟在套餐信息下面：要改的正是上面那张卡里的内容。
+              用 secondary 描边按钮，与整页底部的 danger 删除按钮拉开层级——
+              修改是常规操作，永久删除不是（UI_REFERENCE 第 10 章）。
+            */}
+            <Button
+              label="编辑套餐"
+              variant="secondary"
+              onPress={openEdit}
+              accessibilityLabel={`编辑套餐 ${detail.name}`}
+            />
 
             <SectionHeader title={`项目（${detail.itemCount}）`} />
             <View style={styles.items}>

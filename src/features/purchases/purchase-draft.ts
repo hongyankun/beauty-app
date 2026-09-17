@@ -1,20 +1,24 @@
 import type { PurchaseItemCategory } from '@/db';
 import { compareBusinessDates, parseBusinessDate } from '@/utils/business-date';
 import { cleanInstitutionName } from '@/utils/institution-name';
-import { parseYuanToMinor } from '@/utils/money';
+import { formatMinorForInput, parseYuanToMinor } from '@/utils/money';
 import { parseQuantity } from '@/utils/quantity';
 import type {
   CreatePurchaseInput,
   CreatePurchaseItemInput,
   InstitutionSelection,
 } from './services/create-purchase';
+import type { PurchaseEditModel } from './services/get-purchase-for-edit';
 
 /**
- * 新增套餐表单的草稿模型与校验。
+ * 套餐表单的草稿模型与校验，新增与编辑共用同一份。
  *
  * 这里是**纯函数**：不碰 React、不碰数据库、不碰导航。
  * 草稿里的每个字段都是用户原样输入的字符串，只有通过 `validatePurchaseDraft`
- * 才会变成带整数分与业务日期的 `CreatePurchaseInput`。
+ * 才会变成带整数分与业务日期的结构化输入。
+ *
+ * 两个流程共用一份的原因很直接：套餐名称必填、金额两位小数、有效期不得早于购买日期
+ * 这些规则在新增和编辑时字字相同，抄成两份迟早会各改各的（任务书第四节）。
  */
 
 /** 机构的选择状态。`query` 同时承担搜索关键词与新机构名称两个角色。 */
@@ -23,6 +27,8 @@ export type InstitutionDraftMode = 'none' | 'existing' | 'new';
 export type PurchaseItemDraft = {
   /** 仅用于 React key 与错误映射，不入库 */
   readonly key: string;
+  /** 既有项目的 ID；null 表示这一行是本次新增的项目 */
+  readonly purchaseItemId: string | null;
   readonly name: string;
   readonly category: PurchaseItemCategory | null;
   readonly quantity: string;
@@ -60,12 +66,45 @@ export type PurchaseFormErrors = {
   readonly items: Readonly<Record<string, PurchaseItemErrors>>;
 };
 
+/**
+ * 校验通过后的项目：在 `CreatePurchaseItemInput` 之上多带一个 `purchaseItemId`。
+ *
+ * 新增流程不看这一列（那时它恒为 null），编辑流程靠它把每一行对回原来的项目。
+ */
+export type PurchaseDraftItemInput = CreatePurchaseItemInput & {
+  readonly purchaseItemId: string | null;
+};
+
+/** 校验通过后的整份输入。结构上仍然可以直接交给 `createPurchase`。 */
+export type PurchaseDraftInput = Omit<CreatePurchaseInput, 'items'> & {
+  readonly items: readonly PurchaseDraftItemInput[];
+};
+
 export type PurchaseDraftValidation =
-  | { readonly ok: true; readonly input: CreatePurchaseInput }
+  | { readonly ok: true; readonly input: PurchaseDraftInput }
   | { readonly ok: false; readonly errors: PurchaseFormErrors };
 
+/** 校验时的附加约束，新增流程不需要传。 */
+export type PurchaseDraftValidationOptions = {
+  /**
+   * 以项目草稿的 `key` 为索引的购买次数下限，即该项目当前的有效核销次数。
+   *
+   * 这是两层次数安全校验的第一层，作用是让用户在按下保存**之前**就看到原因
+   * （PRD-PUR-008、E-06）。第二层在 `updatePurchase` 的事务里，那一层才是最终裁决。
+   */
+  readonly minQuantityByKey?: Readonly<Record<string, number>>;
+};
+
 export function createEmptyItemDraft(key: string): PurchaseItemDraft {
-  return { key, name: '', category: null, quantity: '', unitAmount: '', notes: '' };
+  return {
+    key,
+    purchaseItemId: null,
+    name: '',
+    category: null,
+    quantity: '',
+    unitAmount: '',
+    notes: '',
+  };
 }
 
 /** 初始草稿：购买日期默认今天，项目区默认给出一行空项目（IA 第 3.6.1 节）。 */
@@ -81,6 +120,41 @@ export function createInitialDraft(today: string, firstItemKey: string): Purchas
     expiresOn: '',
     notes: '',
     items: [createEmptyItemDraft(firstItemKey)],
+  };
+}
+
+/**
+ * 从库里读到的套餐生成编辑草稿。
+ *
+ * 初值全部来自真实数据，没有任何默认值兜底（任务书第五节第 1 条）：
+ * 购买日期不会退回今天，机构不会退回空，金额也不会被重新格式化成带符号的展示文本。
+ *
+ * 项目草稿的 `key` 直接用项目 ID：它天然唯一且稳定，重新渲染时不会错位。
+ * 本次新增的行没有 ID，由调用方另发一个不会与之相撞的 key。
+ */
+export function createDraftFromEdit(model: PurchaseEditModel): PurchaseDraft {
+  return {
+    name: model.name,
+    // 机构 ID 还在就按「已选中」呈现；只剩快照名说明这条记录的机构已经不在可选列表里，
+    // 此时把快照名放进输入框当作一个待确认的新机构名，不假装用户什么都没填过。
+    institutionMode:
+      model.institutionId !== null ? 'existing' : model.institutionName !== null ? 'new' : 'none',
+    institutionId: model.institutionId,
+    institutionQuery: model.institutionName ?? '',
+    city: model.city ?? '',
+    purchaseDate: model.purchaseDate,
+    totalAmount: formatMinorForInput(model.totalAmountMinor),
+    expiresOn: model.expiresOn ?? '',
+    notes: model.notes ?? '',
+    items: model.items.map((item) => ({
+      key: item.id,
+      purchaseItemId: item.id,
+      name: item.name,
+      category: item.category,
+      quantity: String(item.quantity),
+      unitAmount: formatMinorForInput(item.unitAmountMinor),
+      notes: item.notes ?? '',
+    })),
   };
 }
 
@@ -135,7 +209,10 @@ function hasAnyError(errors: PurchaseFormErrors): boolean {
  * 一次性收集**全部**字段的错误再返回，不在第一个错误处短路：
  * 用户应该一次看到所有需要修改的地方，而不是改一个冒一个。
  */
-export function validatePurchaseDraft(draft: PurchaseDraft): PurchaseDraftValidation {
+export function validatePurchaseDraft(
+  draft: PurchaseDraft,
+  options: PurchaseDraftValidationOptions = {},
+): PurchaseDraftValidation {
   const itemErrors: Record<string, PurchaseItemErrors> = {};
   let nameError: string | undefined;
   let institutionError: string | undefined;
@@ -178,7 +255,7 @@ export function validatePurchaseDraft(draft: PurchaseDraft): PurchaseDraftValida
     }
   }
 
-  const items: CreatePurchaseItemInput[] = [];
+  const items: PurchaseDraftItemInput[] = [];
   for (const item of draft.items) {
     const errors: {
       name?: string;
@@ -197,6 +274,13 @@ export function validatePurchaseDraft(draft: PurchaseDraft): PurchaseDraftValida
     const quantity = parseQuantity(item.quantity);
     if (!quantity.ok) {
       errors.quantity = QUANTITY_MESSAGES[quantity.reason];
+    } else {
+      // 次数不得少于已核销次数。只有编辑流程会传这个下限；
+      // 提示里同时给出当前已核销次数与最小可填值，用户不用自己推算（E-06）。
+      const minQuantity = options.minQuantityByKey?.[item.key];
+      if (minQuantity !== undefined && quantity.quantity < minQuantity) {
+        errors.quantity = `已核销 ${minQuantity} 次，购买次数不能少于 ${minQuantity}`;
+      }
     }
 
     // 单次金额必填，允许填 0 表示赠送项目（PRD 第 6.2 节、PRD-PUR-011）。
@@ -212,6 +296,7 @@ export function validatePurchaseDraft(draft: PurchaseDraft): PurchaseDraftValida
     }
     if (item.category !== null && quantity.ok && unitAmount.ok) {
       items.push({
+        purchaseItemId: item.purchaseItemId,
         name: item.name.trim(),
         category: item.category,
         quantity: quantity.quantity,
@@ -268,27 +353,32 @@ export function allocatedTotalMinor(draft: PurchaseDraft): number | null {
   return total;
 }
 
-function isItemPristine(item: PurchaseItemDraft): boolean {
+function isSameItem(item: PurchaseItemDraft, initial: PurchaseItemDraft): boolean {
   return (
-    item.name === '' &&
-    item.category === null &&
-    item.quantity === '' &&
-    item.unitAmount === '' &&
-    item.notes === ''
+    item.purchaseItemId === initial.purchaseItemId &&
+    item.name === initial.name &&
+    item.category === initial.category &&
+    item.quantity === initial.quantity &&
+    item.unitAmount === initial.unitAmount &&
+    item.notes === initial.notes
   );
 }
 
 /**
- * 草稿相对初始状态是否已有内容。
+ * 草稿相对初始状态是否已有改动。
  *
  * 用来决定返回时要不要弹放弃确认（IA 第 4.3 节第 4 条）。
- * 购买日期默认是今天，用户没动它不算改动，所以按「与初始草稿是否相同」判断，
- * 而不是按「是否非空」。
+ * 逐字段与初始草稿比较，而不是判断「是否非空」：新增时购买日期默认今天、
+ * 编辑时所有字段一打开就都有值，按非空判断会让「什么都没改就返回」也弹确认
+ * （任务书第五节第 8 条）。
+ *
+ * 只比较用户能改的内容，不比较 `key`：新增一行再删掉，草稿应当算回未修改。
  */
 export function isDraftDirty(draft: PurchaseDraft, initial: PurchaseDraft): boolean {
   if (
     draft.name !== initial.name ||
     draft.institutionMode !== initial.institutionMode ||
+    draft.institutionId !== initial.institutionId ||
     draft.institutionQuery !== initial.institutionQuery ||
     draft.city !== initial.city ||
     draft.purchaseDate !== initial.purchaseDate ||
@@ -301,5 +391,8 @@ export function isDraftDirty(draft: PurchaseDraft, initial: PurchaseDraft): bool
   if (draft.items.length !== initial.items.length) {
     return true;
   }
-  return draft.items.some((item) => !isItemPristine(item));
+  return draft.items.some((item, index) => {
+    const initialItem = initial.items[index];
+    return initialItem === undefined || !isSameItem(item, initialItem);
+  });
 }

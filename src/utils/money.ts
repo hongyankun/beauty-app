@@ -94,6 +94,24 @@ function groupThousands(digits: string): string {
   return grouped;
 }
 
+/**
+ * 把整数分还原成金额输入框里的文本，例如 `1280.00`。
+ *
+ * 与 `formatMinorAsYuan` 的区别是这里**不加货币符号、不加千分位**：
+ * 它的输出会被塞回输入框，再由 `parseYuanToMinor` 读回来，
+ * 而那个函数明确不接受千分位与货币符号。两者一旦混用，编辑页一打开
+ * 总价就会变成一个校验不过的值。
+ */
+export function formatMinorForInput(minor: number): string {
+  const rounded = Math.trunc(minor);
+  const sign = rounded < 0 ? '-' : '';
+  const absolute = Math.abs(rounded);
+  const yuan = Math.trunc(absolute / MINOR_UNITS_PER_YUAN);
+  const cents = absolute % MINOR_UNITS_PER_YUAN;
+
+  return `${sign}${yuan}.${String(cents).padStart(2, '0')}`;
+}
+
 /** 按 UI 基线第 4.1 节的 `¥1,280.00` 格式展示整数分。 */
 export function formatMinorAsYuan(minor: number): string {
   const rounded = Math.trunc(minor);

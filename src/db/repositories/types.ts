@@ -84,6 +84,42 @@ export type RedeemableItemRow = {
   readonly expires_on: BusinessDate | null;
 };
 
+/**
+ * 编辑套餐时每个现存项目的安全上下文。
+ *
+ * 比 `PurchaseItemDetailRow` 多一列 `redemption_count`：它统计**全部**核销记录，
+ * 含已撤销。两个计数回答两个不同的问题，不能互相替代：
+ *
+ * - `active_redemption_count` 决定「次数最少能改到几」（PRD-PUR-008、E-06）。
+ * - `redemption_count` 决定「这个项目还能不能从套餐里删掉」。已撤销的核销
+ *   同样是历史，编辑套餐不得把它顺手清掉，因此只要有过任何一条记录就不允许删除。
+ */
+export type PurchaseItemEditRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly category: PurchaseItemCategory;
+  readonly quantity: number;
+  readonly unit_amount_minor: number;
+  readonly notes: string | null;
+  readonly created_at: UtcTimestamp;
+  /** 有效核销数（只数 `status = 'active'`） */
+  readonly active_redemption_count: number;
+  /** 全部核销数，含已撤销 */
+  readonly redemption_count: number;
+};
+
+/** 更新一个套餐项目时允许改写的列；`id` 与 `purchase_id` 只用于定位。 */
+export type PurchaseItemUpdate = {
+  readonly id: string;
+  readonly purchase_id: string;
+  readonly name: string;
+  readonly category: PurchaseItemCategory;
+  readonly quantity: number;
+  readonly unit_amount_minor: number;
+  readonly notes: string | null;
+  readonly updated_at: UtcTimestamp;
+};
+
 export type PurchaseRepository = {
   /** 按购买日期倒序、同日按创建时间倒序返回全部套餐概览。 */
   listSummaries(profileId: string): Promise<PurchaseSummaryRow[]>;
@@ -103,6 +139,13 @@ export type PurchaseRepository = {
    * 重复一次同样的校验。
    */
   listItemDetails(purchaseId: string): Promise<PurchaseItemDetailRow[]>;
+  /**
+   * 套餐下的全部项目，附带有效核销数与全部核销数，按录入顺序返回。
+   *
+   * 编辑流程专用：既用于进入编辑页时取初值，也用于**事务内**的二次校验。
+   * 不带 `profileId`，同 `listItemDetails`：调用方先用 `findById` 确认归属。
+   */
+  listItemsForEdit(purchaseId: string): Promise<PurchaseItemEditRow[]>;
   /** 读取单个项目及其所属套餐的机构与有效期，同时校验档案归属。 */
   findItemContext(profileId: string, purchaseItemId: string): Promise<PurchaseItemContextRow | null>;
   /**
@@ -119,7 +162,47 @@ export type PurchaseRepository = {
    */
   deletePermanently(profileId: string, purchaseId: string): Promise<number>;
   insert(row: PurchaseRow): Promise<void>;
+  /**
+   * 更新套餐自身的可编辑字段，返回实际更新的行数（正常为 1）。
+   *
+   * 只改本行：机构与城市快照写在 `purchases` 上，**不触及 `redemption_records`
+   * 的同名快照列**。核销快照记录的是「那一次核销发生时的机构」，
+   * 是历史事实，不随套餐改机构而变（PRD 第 5A.2 节、PRD-INST-005）。
+   *
+   * `currency` 不在可写列内：第一版只有 CNY（Q-11），编辑页也没有这个字段。
+   */
+  update(row: PurchaseUpdate): Promise<number>;
   insertItems(rows: readonly PurchaseItemRow[]): Promise<void>;
+  /**
+   * 更新一个既有项目，返回实际更新的行数（正常为 1）。
+   *
+   * 走 UPDATE 而不是「删掉再插一条」：项目 ID 是核销记录的外键目标，
+   * 换 ID 等于把这个项目的核销历史全部指向空处（任务书第三节）。
+   */
+  updateItem(row: PurchaseItemUpdate): Promise<number>;
+  /**
+   * 删除一个**从未产生过任何核销记录**的项目，返回实际删除的行数。
+   *
+   * 「没有核销历史」是写进 SQL 的删除条件而不是先查后删：即便调用方漏判，
+   * 或在读与写之间刚好新增了一条核销，这条语句也只会删 0 行。
+   * 调用方必须校验返回值为 1，为 0 时回滚并提示刷新（任务书第七节）。
+   */
+  deleteItem(purchaseId: string, purchaseItemId: string): Promise<number>;
+};
+
+/** 更新一个套餐时允许改写的列；`id` 与 `profile_id` 只用于定位。 */
+export type PurchaseUpdate = {
+  readonly id: string;
+  readonly profile_id: string;
+  readonly institution_id: string | null;
+  readonly institution_name_snapshot: string | null;
+  readonly city_snapshot: string | null;
+  readonly name: string;
+  readonly purchase_date: BusinessDate;
+  readonly total_amount_minor: number;
+  readonly expires_on: BusinessDate | null;
+  readonly notes: string | null;
+  readonly updated_at: UtcTimestamp;
 };
 
 /**

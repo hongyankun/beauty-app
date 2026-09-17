@@ -5,11 +5,21 @@ import { Colors, Layout, Spacing, TextStyles } from '@/theme';
 import { PURCHASE_ITEM_CATEGORY_OPTIONS } from '../categories';
 import type { PurchaseItemDraft, PurchaseItemErrors } from '../purchase-draft';
 
+/** 编辑既有项目时的附加事实。新增流程不传。 */
+export type PurchaseItemEditorContext = {
+  /** 已核销次数，只统计有效核销 */
+  readonly redeemedCount: number;
+  /** 是否有过任何核销记录，含已撤销 */
+  readonly hasRedemptionHistory: boolean;
+};
+
 export type PurchaseItemEditorProps = {
   item: PurchaseItemDraft;
   /** 从 1 开始的序号，只用于标题与读屏，不入库 */
   position: number;
   errors?: PurchaseItemErrors;
+  /** 编辑既有项目时的核销事实；不传表示这是一行新项目 */
+  context?: PurchaseItemEditorContext;
   onChange: (key: string, patch: Partial<PurchaseItemDraft>) => void;
   onRemove: (key: string) => void;
   /** 只剩一个项目时不允许删除：套餐至少要有一个项目（PRD-PUR-003） */
@@ -21,15 +31,27 @@ export type PurchaseItemEditorProps = {
  *
  * 一张卡片承载一个项目（UI_REFERENCE 第 8.1 章）。分类用 Chip 组而不是下拉菜单：
  * 只有七个固定取值，平铺可以一眼看全，也不需要再引入弹层组件。
+ *
+ * 有 `context` 时会在购买次数上方陈述已核销次数（IA 第 3.6.2 节：编辑态展示
+ * 每个项目的已核销次数）。这里只陈述事实，不代替校验——能不能保存由
+ * `validatePurchaseDraft` 与保存事务判定。
  */
 export function PurchaseItemEditor({
   item,
   position,
   errors,
+  context,
   onChange,
   onRemove,
   removable,
 }: PurchaseItemEditorProps) {
+  const quantityHint =
+    context === undefined
+      ? undefined
+      : context.redeemedCount === 0
+        ? '还没有核销过'
+        : `已核销 ${context.redeemedCount} 次，不能少于 ${context.redeemedCount}`;
+
   return (
     <Card style={styles.card}>
       <View style={styles.header}>
@@ -38,7 +60,7 @@ export function PurchaseItemEditor({
           <Pressable
             onPress={() => onRemove(item.key)}
             accessibilityRole="button"
-            accessibilityLabel={`删除项目 ${position}`}
+            accessibilityLabel={`从套餐中删除项目 ${position}`}
             hitSlop={Layout.labelGap}
             style={({ pressed }) => [styles.remove, pressed ? styles.pressed : null]}
           >
@@ -85,6 +107,7 @@ export function PurchaseItemEditor({
         onChangeText={(value) => onChange(item.key, { quantity: value })}
         placeholder="例如 5"
         keyboardType="number-pad"
+        hint={quantityHint}
         error={errors?.quantity}
       />
 

@@ -3,14 +3,17 @@ import {
   DEFAULT_PROFILE_ID,
   type BusinessDate,
   type DataAccess,
-  type PurchaseItemCategory,
   type PurchaseItemRow,
 } from '@/db';
-import { compareBusinessDates, isBusinessDate } from '@/utils/business-date';
-import { MAX_AMOUNT_MINOR } from '@/utils/money';
 import { createUuid } from '@/utils/uuid';
-import { PurchaseServiceError } from './errors';
 import { resolveInstitution, type InstitutionSelection } from './institution-selection';
+import {
+  assertHasAtLeastOneItem,
+  assertPurchaseBasicsAreValid,
+  assertPurchaseItemIsValid,
+  normalizeCity,
+  type PurchaseItemFields,
+} from './purchase-input-rules';
 
 /**
  * 新增套餐用例。
@@ -23,15 +26,8 @@ import { resolveInstitution, type InstitutionSelection } from './institution-sel
 // 这里继续导出类型，是为了不让表单层关心它具体来自哪个文件。
 export type { InstitutionSelection };
 
-export type CreatePurchaseItemInput = {
-  readonly name: string;
-  readonly category: PurchaseItemCategory;
-  /** 购买次数，正整数 */
-  readonly quantity: number;
-  /** 分摊单价，整数分，允许为 0（0 表示赠送项目，PRD 第 6.2 节） */
-  readonly unitAmountMinor: number;
-  readonly notes: string | null;
-};
+/** 字段定义与编辑流程共用，见 `purchase-input-rules`。 */
+export type CreatePurchaseItemInput = PurchaseItemFields;
 
 export type CreatePurchaseInput = {
   readonly name: string;
@@ -45,12 +41,6 @@ export type CreatePurchaseInput = {
   readonly items: readonly CreatePurchaseItemInput[];
 };
 
-function assertValid(condition: boolean, message: string): void {
-  if (!condition) {
-    throw new PurchaseServiceError(message);
-  }
-}
-
 /**
  * 入参兜底校验。
  *
@@ -58,33 +48,11 @@ function assertValid(condition: boolean, message: string): void {
  * 换一个调用方（导入、心愿单转购买）时这些规则仍然必须成立。
  */
 function assertInputIsValid(input: CreatePurchaseInput): void {
-  assertValid(input.name.trim() !== '', '请填写套餐名称');
-  assertValid(isBusinessDate(input.purchaseDate), '购买日期不是一个真实存在的日期');
-  assertValid(
-    input.expiresOn === null || isBusinessDate(input.expiresOn),
-    '有效期不是一个真实存在的日期',
-  );
-  assertValid(
-    input.expiresOn === null || compareBusinessDates(input.expiresOn, input.purchaseDate) >= 0,
-    '有效期不能早于购买日期',
-  );
-  assertValid(
-    Number.isSafeInteger(input.totalAmountMinor) &&
-      input.totalAmountMinor >= 0 &&
-      input.totalAmountMinor <= MAX_AMOUNT_MINOR,
-    '套餐总价不在可保存的范围内',
-  );
-  assertValid(input.items.length > 0, '至少添加一个项目');
+  assertPurchaseBasicsAreValid(input);
+  assertHasAtLeastOneItem(input.items.length);
 
   for (const item of input.items) {
-    assertValid(item.name.trim() !== '', '请填写项目名称');
-    assertValid(Number.isInteger(item.quantity) && item.quantity > 0, '购买次数必须是大于 0 的整数');
-    assertValid(
-      Number.isSafeInteger(item.unitAmountMinor) &&
-        item.unitAmountMinor >= 0 &&
-        item.unitAmountMinor <= MAX_AMOUNT_MINOR,
-      '单次金额不在可保存的范围内',
-    );
+    assertPurchaseItemIsValid(item);
   }
 }
 
@@ -101,7 +69,7 @@ export async function createPurchase(
   assertInputIsValid(input);
 
   const now = new Date().toISOString();
-  const city = input.city === null || input.city.trim() === '' ? null : input.city.trim();
+  const city = normalizeCity(input.city);
 
   return dataAccess.transaction(async (repositories) => {
     const institution = await resolveInstitution(repositories, input.institution, city, now);

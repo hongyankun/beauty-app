@@ -5,6 +5,7 @@ import type {
   PurchaseDeletionImpactRow,
   PurchaseItemContextRow,
   PurchaseItemDetailRow,
+  PurchaseItemEditRow,
   PurchaseRepository,
   PurchaseSummaryRow,
   RedeemableItemRow,
@@ -126,6 +127,34 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
       );
     },
 
+    async listItemsForEdit(purchaseId) {
+      // 排序与 listItemDetails 完全一致，编辑页的项目顺序才不会和详情页对不上。
+      //
+      // 两个计数都用相关子查询：一个带 status 过滤，一个不带。不能只查一次再
+      // 在 JS 里算——「有没有历史」问的是含已撤销的全量，「最少能改到几」
+      // 问的只是有效那部分，两者在同一个项目上经常不相等。
+      return db.getAllAsync<PurchaseItemEditRow>(
+        `SELECT
+            i.id,
+            i.name,
+            i.category,
+            i.quantity,
+            i.unit_amount_minor,
+            i.notes,
+            i.created_at,
+            (SELECT COUNT(*)
+               FROM redemption_records r
+              WHERE r.purchase_item_id = i.id AND r.status = 'active') AS active_redemption_count,
+            (SELECT COUNT(*)
+               FROM redemption_records r
+              WHERE r.purchase_item_id = i.id) AS redemption_count
+           FROM purchase_items i
+          WHERE i.purchase_id = ?
+          ORDER BY i.created_at ASC, i.rowid ASC`,
+        [purchaseId],
+      );
+    },
+
     async findItemContext(profileId, purchaseItemId) {
       // JOIN 套餐既是为了拿有效期与机构快照，也是这条查询唯一的档案归属校验点：
       // purchase_items 自己没有 profile_id。
@@ -218,6 +247,41 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
       );
     },
 
+    async update(row) {
+      // `WHERE id = ? AND profile_id = ?` 而不是只按 id：档案条件写进语句，
+      // 归属不符时更新 0 行，由调用方回滚，而不是先查一次再信任那次查询的结果。
+      //
+      // SET 列表里没有 redemption_records 的任何东西。改套餐的机构只改这一行，
+      // 历史核销的机构快照原样不动（PRD-INST-005）。
+      const result = await db.runAsync(
+        `UPDATE purchases
+            SET institution_id = ?,
+                institution_name_snapshot = ?,
+                city_snapshot = ?,
+                name = ?,
+                purchase_date = ?,
+                total_amount_minor = ?,
+                expires_on = ?,
+                notes = ?,
+                updated_at = ?
+          WHERE id = ? AND profile_id = ?`,
+        [
+          row.institution_id,
+          row.institution_name_snapshot,
+          row.city_snapshot,
+          row.name,
+          row.purchase_date,
+          row.total_amount_minor,
+          row.expires_on,
+          row.notes,
+          row.updated_at,
+          row.id,
+          row.profile_id,
+        ],
+      );
+      return result.changes;
+    },
+
     async insertItems(rows) {
       // 逐条插入。调用方保证整批处在同一个事务里，任一条失败会连同套餐一起回滚，
       // 不会留下「只有一半项目」的套餐。
@@ -240,6 +304,53 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
           ],
         );
       }
+    },
+
+    async updateItem(row) {
+      // 带 purchase_id 条件，防止用一个属于别的套餐的项目 ID 改到别人的数据；
+      // 套餐归属已由调用方的 findById 校验过，两者串起来就是完整的归属链。
+      //
+      // 这里不碰 id，也不存在「先删后插」的路径：项目 ID 是核销记录的外键目标。
+      const result = await db.runAsync(
+        `UPDATE purchase_items
+            SET name = ?,
+                category = ?,
+                quantity = ?,
+                unit_amount_minor = ?,
+                notes = ?,
+                updated_at = ?
+          WHERE id = ? AND purchase_id = ?`,
+        [
+          row.name,
+          row.category,
+          row.quantity,
+          row.unit_amount_minor,
+          row.notes,
+          row.updated_at,
+          row.id,
+          row.purchase_id,
+        ],
+      );
+      return result.changes;
+    },
+
+    async deleteItem(purchaseId, purchaseItemId) {
+      // NOT EXISTS 是这条语句自带的安全阀：只要该项目名下有过任何一条核销记录
+      // （不分 active 与 void），删除就匹配不到行，返回 0。已撤销的核销同样是
+      // 历史，不能因为编辑套餐被顺手清掉，所以这里刻意不加 status 过滤。
+      //
+      // 不依赖外键或级联：独占事务的连接上 foreign_keys 是关的（见
+      // run-in-transaction.ts），真删下去只会制造指向空处的核销记录。
+      const result = await db.runAsync(
+        `DELETE FROM purchase_items
+          WHERE id = ?
+            AND purchase_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM redemption_records r WHERE r.purchase_item_id = ?
+            )`,
+        [purchaseItemId, purchaseId, purchaseItemId],
+      );
+      return result.changes;
     },
   };
 }
