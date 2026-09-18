@@ -56,7 +56,7 @@
 - **（已完成）** V1 表结构：profiles / institutions / purchases / purchase_items / redemption_records，含外键、约束与索引
 - Purchase / PurchaseItem / Redemption 的领域模型与类型定义（当前只有数据库行类型）
 - repository 实现 + 为同步预留的操作队列结构
-- Institution 的新增与复用逻辑（表结构已就绪，业务逻辑未实现）（[ADR-014](./DECISIONS.md#adr-014-机构作为可复用的独立实体)）
+- **（已完成）** Institution 的新增、复用、编辑、归档与恢复，以及"我的"下的机构管理中心（[ADR-014](./DECISIONS.md#adr-014-机构作为可复用的独立实体)，见 [PRD 第 5A.3 节](./PRODUCT_REQUIREMENTS.md#5a3-机构管理编辑归档与恢复)）
 - 剩余次数的派生计算逻辑（由购买数量与有效核销记录算出，不可直接改写）
 - 套餐永久删除与核销作废的业务操作与确认 UI（规则已定，见 [ADR-016](./DECISIONS.md#adr-016-套餐永久删除核销记录使用作废机制)；表结构已就绪，业务逻辑与界面未实现）
 - 完整闭环：新增套餐 → 添加项目 → 查看详情 → 核销 → 余次更新 → 首页统计更新

@@ -18,7 +18,7 @@ import { createPurchase } from '../services/create-purchase';
  * （ARCHITECTURE 第三节的分层）。
  */
 
-/** 放在模块级：它是 `beforeRemove` 监听的依赖，每次渲染新建一个会让监听反复重挂。 */
+/** 放在模块级：文案不随状态变化，没必要每次渲染新建一个对象。 */
 const DISCARD_PROMPT = {
   title: '放弃这条购买记录？',
   message: '已经填写的内容不会被保存。',

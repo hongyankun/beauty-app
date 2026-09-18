@@ -23,7 +23,7 @@ import { updatePurchase } from '../services/update-purchase';
  * 保存走 `updatePurchase`（ARCHITECTURE 第三节）。
  */
 
-/** 放在模块级：它是 `beforeRemove` 监听的依赖，每次渲染新建一个会让监听反复重挂。 */
+/** 放在模块级：文案不随状态变化，没必要每次渲染新建一个对象。 */
 const DISCARD_PROMPT = {
   title: '放弃本次修改？',
   message: '刚才改动的内容不会被保存。',

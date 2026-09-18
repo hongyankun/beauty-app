@@ -28,7 +28,15 @@ export type InstitutionSelection =
  * 同一档案内已有同名机构就复用，不重复创建（PRD-INST-002、PRD-INST-003）。
  * 查找与插入都在同一个事务里，两次快速保存同一个新机构不会各插一条。
  *
- * `city` 只在**新建**机构时作为它的城市写入；选择已有机构时不会去改对方的城市。
+ * 命中的若是**已归档**的机构，就地把它恢复并复用原来的 ID，而不是新建第二条
+ * 同名机构（PRD 第 5A.3 节）：用户重新用起这个名字，本来就意味着它又在用了，
+ * 而新建一条会让同一家店的历史被劈成两半。
+ *
+ * `city` 只在**新建**机构时作为它的城市写入；复用已有机构（含刚恢复的）时
+ * 不会去改对方的名称与城市——主数据只在机构管理中心里改。
+ *
+ * 任何分支都不写 `purchases` 与 `redemption_records` 上的机构快照：
+ * 那两份文本由调用方按「这一次购买/核销当时叫什么」单独落库。
  */
 export async function resolveInstitution(
   repositories: RepositoryBundle,
@@ -64,7 +72,7 @@ export async function resolveInstitution(
     normalizedName,
   );
   if (reusable !== null) {
-    return reusable;
+    return reusable.is_archived === 1 ? await restoreForReuse(repositories, reusable, now) : reusable;
   }
 
   const created: InstitutionRow = {
@@ -80,4 +88,34 @@ export async function resolveInstitution(
   };
   await repositories.institutions.insert(created);
   return created;
+}
+
+/**
+ * 把一条已归档的机构恢复成使用中，并返回恢复后的行。
+ *
+ * 恢复只动 `is_archived` 与 `updated_at`：ID、创建时间、名称、城市、备注
+ * 全部保持原样，历史记录与它的关联自然也一个都不变。
+ *
+ * 这里不做 `normalized_name` 冲突判断：调用方是按这个键找到它的，
+ * 若同档案内还存在一条未归档的同名机构，`findByNormalizedName`
+ * 会优先返回那一条，根本不会走到这里。
+ */
+async function restoreForReuse(
+  repositories: RepositoryBundle,
+  archived: InstitutionRow,
+  now: string,
+): Promise<InstitutionRow> {
+  const changes = await repositories.institutions.setArchived(
+    DEFAULT_PROFILE_ID,
+    archived.id,
+    1,
+    0,
+    now,
+  );
+  if (changes !== 1) {
+    // 整件事都在独占事务里，读到归档、写却没落上，说明状态已经不是刚才那个了。
+    // 此时不知道新状态是什么，宁可整笔回滚让用户重来，也不猜。
+    throw new PurchaseServiceError('机构状态刚刚有变化，请返回重试');
+  }
+  return { ...archived, is_archived: 0, updated_at: now };
 }

@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Card, Icon, ListGroup, ListRow, Screen, SectionHeader } from '@/components/ui';
@@ -9,8 +10,11 @@ import { Colors, Layout, Radii, TextStyles } from '@/theme';
  *
  * 第一版只有当前用户本人一个档案（ADR-015）：这里不出现档案切换入口、
  * 不出现多档案管理，也不出现其他使用人。
+ *
+ * 「数据管理」里目前只有机构管理是真的可用页面，导出与缓存仍是占位。
  */
 export default function MeScreen() {
+  const router = useRouter();
   const comingSoon = useComingSoon();
 
   return (
@@ -26,14 +30,26 @@ export default function MeScreen() {
       </Card>
 
       <View style={styles.section}>
-        <SectionHeader title="设置" />
+        <SectionHeader title="数据管理" />
         <ListGroup hasLeadingIcons>
           <ListRow
-            icon="dataExport"
-            title="数据管理"
-            subtitle="导出个人记录、清除本地缓存"
-            onPress={() => comingSoon('数据管理')}
+            icon="institution"
+            title="机构管理"
+            subtitle="整理套餐和核销中使用过的机构"
+            onPress={() => router.push('/(tabs)/me/institutions')}
           />
+          <ListRow
+            icon="dataExport"
+            title="导出与缓存"
+            subtitle="导出个人记录、清除本地缓存"
+            onPress={() => comingSoon('导出与缓存')}
+          />
+        </ListGroup>
+      </View>
+
+      <View style={styles.section}>
+        <SectionHeader title="设置" />
+        <ListGroup hasLeadingIcons>
           <ListRow
             icon="privacy"
             title="隐私与安全"

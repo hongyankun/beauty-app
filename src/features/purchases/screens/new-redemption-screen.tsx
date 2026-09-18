@@ -1,4 +1,5 @@
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 
@@ -108,32 +109,35 @@ function RedemptionForm({
 
   /** 提交闸门。放在 ref 而不是 state 里，连点两次时第二次同步就能被挡住（PRD-RED-005）。 */
   const submitting = useRef(false);
-  /** 保存成功后允许直接离开，不再弹放弃确认。 */
-  const saved = useRef(false);
+  /**
+   * 保存成功后允许直接离开，不再弹放弃确认。
+   *
+   * 必须是 state 而不是 ref：下面的拦截开关在**渲染期**读取，
+   * 改一个 ref 不会让它重新计算。
+   */
+  const [saved, setSaved] = useState(false);
 
-  const draftRef = useRef(draft);
-  useEffect(() => {
-    draftRef.current = draft;
-  }, [draft]);
+  /**
+   * 拦截返回手势、Android 实体返回键与页面栈弹出（IA 第 4.3 节第 4 条）。
+   *
+   * 必须用 `usePreventRemove`，不能自己监听 `beforeRemove`：native-stack 的
+   * iOS 侧滑由**原生侧**完成弹出，JS 里 `preventDefault()` 拦不回已经弹掉的页面，
+   * 用户点「继续填写」仍会退出。这个 hook 会把「本页不允许被移除」同步给原生栈。
+   */
+  const preventRemove = isRedemptionDraftDirty(draft, initialDraft) && !saved && !saving;
 
-  /** 拦截返回手势、Android 实体返回键与页面栈弹出（IA 第 4.3 节第 4 条）。 */
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (saved.current || !isRedemptionDraftDirty(draftRef.current, initialDraft)) {
-        return;
-      }
-      event.preventDefault();
-      Alert.alert('放弃这次核销记录？', '已经填写的内容不会被保存。', [
-        { text: '继续填写', style: 'cancel' },
-        {
-          text: '放弃',
-          style: 'destructive',
-          onPress: () => navigation.dispatch(event.data.action),
-        },
-      ]);
-    });
-    return unsubscribe;
-  }, [navigation, initialDraft]);
+  usePreventRemove(preventRemove, ({ data }) => {
+    Alert.alert('放弃这次核销记录？', '已经填写的内容不会被保存。', [
+      // 只关掉弹窗：不 dispatch 原返回 action，页面留在原处，输入原样保留。
+      { text: '继续填写', style: 'cancel' },
+      {
+        // 只有用户明确选择放弃时，才把原来的返回动作补发一次。
+        text: '放弃',
+        style: 'destructive',
+        onPress: () => navigation.dispatch(data.action),
+      },
+    ]);
+  });
 
   const updateDraft = useCallback((patch: Partial<RedemptionDraft>) => {
     setDraft((previous) => ({ ...previous, ...patch }));
@@ -178,26 +182,37 @@ function RedemptionForm({
 
       try {
         await createRedemption(dataAccess, input);
-        saved.current = true;
-        // 回到套餐详情，它在获得焦点时会重新读取余次。
-        // 用 dismissTo 而不是 replace：replace 会把表单这一层换成第二份 Tab 导航。
-        const detail = {
-          pathname: '/(tabs)/records/[purchaseId]' as const,
-          params: { purchaseId: returnPurchaseId },
-        };
-        if (router.canDismiss()) {
-          router.dismissTo(detail);
-        } else {
-          router.replace(detail);
-        }
+        setSaved(true);
       } catch (error) {
         setSaveError(toUserMessage(error, '没能保存这次核销，请重试。你填写的内容都还在。'));
         submitting.current = false;
         setSaving(false);
       }
     },
-    [dataAccess, router, returnPurchaseId],
+    [dataAccess],
   );
+
+  /**
+   * 保存成功后回到套餐详情，它在获得焦点时会重新读取余次。
+   *
+   * 放在 effect 里而不是异步回调里：`preventRemove` 是渲染期的值，
+   * 在回调里紧接着导航时它还是 true，刚保存成功的用户会被问要不要放弃填写。
+   */
+  useEffect(() => {
+    if (!saved) {
+      return;
+    }
+    // 用 dismissTo 而不是 replace：replace 会把表单这一层换成第二份 Tab 导航。
+    const detail = {
+      pathname: '/(tabs)/records/[purchaseId]' as const,
+      params: { purchaseId: returnPurchaseId },
+    };
+    if (router.canDismiss()) {
+      router.dismissTo(detail);
+    } else {
+      router.replace(detail);
+    }
+  }, [saved, router, returnPurchaseId]);
 
   const handleSubmit = useCallback(() => {
     const result = validateRedemptionDraft(draft, target.purchaseItemId);
@@ -253,7 +268,7 @@ function RedemptionForm({
   }, [draft, target, save]);
 
   const handleCancel = useCallback(() => {
-    // 放弃确认统一由 beforeRemove 监听处理，这里只负责发起返回。
+    // 放弃确认统一由 usePreventRemove 处理，这里只负责发起返回。
     router.back();
   }, [router]);
 

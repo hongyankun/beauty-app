@@ -6,6 +6,7 @@ import type {
   PurchaseRow,
   RedemptionRecordRow,
   RedemptionStatus,
+  SqliteBoolean,
   UtcTimestamp,
 } from '../types';
 
@@ -23,13 +24,120 @@ export type InstitutionOption = {
   readonly city: string | null;
 };
 
+/**
+ * 机构管理中心列表里的一行：机构主数据 + 它的真实关联条数。
+ *
+ * 两个计数的口径不同，不能互相套用：
+ *
+ * - `purchase_count` 只数 `purchases.institution_id`；
+ * - `redemption_count` 只数 `redemption_records.institution_id`，
+ *   且**不按 status 过滤**——已撤销的核销同样是发生过的历史，
+ *   归档确认框里少报一条就是误导。
+ *
+ * 两个计数都**只认外键**，绝不从名称快照反推：快照是历史文本，
+ * 同名的另一家机构、或者改名前的旧文本都会把计数算错。
+ * 计数只用于说明影响范围，任何时候都不会反过来改写快照。
+ */
+export type InstitutionUsageRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly city: string | null;
+  readonly notes: string | null;
+  readonly is_archived: SqliteBoolean;
+  readonly created_at: UtcTimestamp;
+  readonly updated_at: UtcTimestamp;
+  readonly purchase_count: number;
+  readonly redemption_count: number;
+};
+
+/**
+ * 与某个判重键撞上的既有机构，只取提示文案需要的几列。
+ *
+ * 带 `is_archived` 是因为两种冲突要给不同的话：撞上使用中的机构要换名字，
+ * 撞上已归档的机构还可以选择先去恢复那一个。
+ */
+export type InstitutionConflictRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly is_archived: SqliteBoolean;
+};
+
+/** 更新一个机构的主数据时允许改写的列；`id` 与 `profile_id` 只用于定位。 */
+export type InstitutionUpdate = {
+  readonly id: string;
+  readonly profile_id: string;
+  readonly name: string;
+  readonly normalized_name: string;
+  readonly city: string | null;
+  readonly notes: string | null;
+  readonly updated_at: UtcTimestamp;
+};
+
 export type InstitutionRepository = {
   /** 当前档案下未归档的机构，按名称升序，供选择器复用（PRD-INST-002）。 */
   listSelectable(profileId: string): Promise<InstitutionOption[]>;
-  /** 按判重键查找已有机构；用于「同名则复用，不重复创建」。 */
+  /**
+   * 当前档案下指定归档状态的机构及其关联条数，按 `updated_at DESC, created_at DESC, id ASC`。
+   *
+   * 第三列是稳定性保险：同一毫秒写入的两条机构若只比前两列，
+   * 返回顺序由 SQLite 自行决定，两次查询可能不一致。
+   */
+  listWithUsage(profileId: string, isArchived: SqliteBoolean): Promise<InstitutionUsageRow[]>;
+  /** 按 ID 读取机构主数据与关联条数，同时校验归属；不存在时返回 null。 */
+  findDetailById(profileId: string, institutionId: string): Promise<InstitutionUsageRow | null>;
+  /**
+   * 按判重键查找已有机构；用于「同名则复用，不重复创建」。
+   *
+   * **含已归档**：用户在新增套餐或核销里再次输入一个已归档机构的名称时，
+   * 正确的做法是把原来那一条恢复并复用它的 ID，而不是插入第二条同名机构
+   * （任务书第九节）。排序把未归档的排在前面，这样历史数据里万一已经存在
+   * 一活一归档两条同名机构，复用的仍然是用户正在用的那一条。
+   */
   findByNormalizedName(profileId: string, normalizedName: string): Promise<InstitutionRow | null>;
+  /**
+   * 在同一档案内查找与 `normalizedName` 相同、但不是 `excludeId` 的机构。
+   *
+   * **含已归档**：归档只是不再出现在选择器里，它仍然占用这个名字。
+   *
+   * 这是唯一性的最终保护。`normalized_name` 上**没有** UNIQUE 约束——
+   * migration 1 刻意只建普通索引，因为 ADR-014 与 PRD 第 5A.2 节写明
+   * 「同名机构允许并存，不自动合并」，而且历史数据里可能已经存在重复行。
+   * 因此调用方必须把这次查找与随后的写入放进**同一个独占事务**：
+   * `withExclusiveTransactionAsync` 期间没有别的写入能插进来，
+   * 查重与写入之间不存在竞态窗口。
+   */
+  findConflict(
+    profileId: string,
+    normalizedName: string,
+    excludeId: string,
+  ): Promise<InstitutionConflictRow | null>;
   /** 按 ID 查找，同时校验归属于该档案。 */
   findById(profileId: string, institutionId: string): Promise<InstitutionRow | null>;
+  /**
+   * 更新机构的名称、判重键、城市与备注，返回实际更新的行数（正常为 1）。
+   *
+   * 只改 `institutions` 这一行。**不触及** `purchases` 与 `redemption_records`
+   * 上的机构与城市快照：那些记录的是「那一次购买/核销当时的机构叫什么」，
+   * 是历史事实，不随主数据改名而变（PRD 第 5A.2 节、PRD-INST-005、PRD-PUR-018）。
+   *
+   * `profile_id`、`created_at`、`is_archived` 不在可写列内。
+   */
+  updateDetails(row: InstitutionUpdate): Promise<number>;
+  /**
+   * 切换归档状态，返回实际更新的行数（正常为 1）。
+   *
+   * `expectedArchived` 写进 WHERE：状态已经不是调用方以为的那个值时只会改 0 行，
+   * 由调用方回滚并提示刷新，而不是把一个未知的新状态盖掉。
+   *
+   * 归档与恢复都不是删除，任何业务记录都不受影响（任务书第七、八节）。
+   */
+  setArchived(
+    profileId: string,
+    institutionId: string,
+    expectedArchived: SqliteBoolean,
+    nextArchived: SqliteBoolean,
+    updatedAt: UtcTimestamp,
+  ): Promise<number>;
   insert(row: InstitutionRow): Promise<void>;
 };
 

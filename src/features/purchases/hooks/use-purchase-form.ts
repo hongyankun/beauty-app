@@ -1,4 +1,5 @@
 import { useNavigation, useRouter } from 'expo-router';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
@@ -38,7 +39,7 @@ export type UsePurchaseFormOptions = {
    * 保存成功后的导航。
    *
    * 与 `onSave` 分开，是为了保证「解除返回拦截」发生在发起导航**之前**：
-   * 合在一起时导航会先触发 `beforeRemove`，此时草稿仍然是脏的，
+   * 合在一起时导航会先被返回拦截挡下，此时草稿仍然是脏的，
    * 用户刚保存成功却被问要不要放弃修改。
    */
   readonly onSaved: () => void;
@@ -89,8 +90,13 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
 
   /** 提交闸门。放在 ref 而不是 state 里，连点两次时第二次同步就能被挡住。 */
   const submitting = useRef(false);
-  /** 保存成功后允许直接离开，不再弹放弃确认。 */
-  const saved = useRef(false);
+  /**
+   * 保存成功后允许直接离开，不再弹放弃确认。
+   *
+   * 必须是 state 而不是 ref：下面的拦截开关在**渲染期**读取，
+   * 改一个 ref 不会让它重新计算。
+   */
+  const [saved, setSaved] = useState(false);
 
   // 回调们只注册一次，不能闭包住某一次渲染的值，否则它们永远拿着挂载那一刻的
   // 草稿做判断。用 ref 取最新值。
@@ -106,25 +112,39 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
    *
    * 只拦顶部的取消按钮是不够的：iOS 侧滑返回与实体返回键不经过那个按钮，
    * 用户改了一半就会静默丢失（IA 第 4.3 节第 4 条、PRD-ERR-003）。
-   * 一字未改时不拦截，直接返回（任务书第五节第 8 条）。
+   *
+   * 这里必须用 `usePreventRemove`，不能自己监听 `beforeRemove`：native-stack 的
+   * iOS 侧滑由**原生侧**完成弹出，JS 里 `preventDefault()` 拦不回已经弹掉的页面，
+   * 用户点「继续填写」仍会退出。这个 hook 会把「本页不允许被移除」同步给原生栈。
+   *
+   * 一字未改时不拦截，直接返回（任务书第五节第 8 条）；保存成功后与保存进行中同样不拦。
+   */
+  const preventRemove = isDraftDirty(draft, initialDraft) && !saved && !saving;
+
+  usePreventRemove(preventRemove, ({ data }) => {
+    Alert.alert(discard.title, discard.message, [
+      // 只关掉弹窗：不 dispatch 原返回 action，页面留在原处，输入原样保留。
+      { text: discard.keepLabel, style: 'cancel' },
+      {
+        // 只有用户明确选择放弃时，才把原来的返回动作补发一次。
+        text: discard.discardLabel,
+        style: 'destructive',
+        onPress: () => navigation.dispatch(data.action),
+      },
+    ]);
+  });
+
+  /**
+   * 保存成功后离开。
+   *
+   * 放在 effect 里而不是异步回调里：`preventRemove` 是渲染期的值，
+   * 在回调里紧接着导航时它还是 true，刚保存成功的用户会被问要不要放弃修改。
    */
   useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (saved.current || !isDraftDirty(draftRef.current, initialDraft)) {
-        return;
-      }
-      event.preventDefault();
-      Alert.alert(discard.title, discard.message, [
-        { text: discard.keepLabel, style: 'cancel' },
-        {
-          text: discard.discardLabel,
-          style: 'destructive',
-          onPress: () => navigation.dispatch(event.data.action),
-        },
-      ]);
-    });
-    return unsubscribe;
-  }, [navigation, initialDraft, discard]);
+    if (saved) {
+      optionsRef.current.onSaved();
+    }
+  }, [saved]);
 
   const updateField = useCallback((patch: Partial<PurchaseDraft>) => {
     setDraft((previous) => ({ ...previous, ...patch }));
@@ -196,8 +216,7 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
       await optionsRef.current.onSave(input);
       // 先解除返回拦截再导航，且不复位闸门：页面即将离开，
       // 复位只会给第二次点击留出空档。
-      saved.current = true;
-      optionsRef.current.onSaved();
+      setSaved(true);
     } catch (error) {
       setSaveError(toUserMessage(error, optionsRef.current.saveErrorFallback));
       submitting.current = false;
@@ -242,7 +261,7 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
   }, [runSave]);
 
   const cancel = useCallback(() => {
-    // 放弃确认统一由 beforeRemove 监听处理，这里只负责发起返回。
+    // 放弃确认统一由 usePreventRemove 处理，这里只负责发起返回。
     router.back();
   }, [router]);
 
