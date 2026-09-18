@@ -260,6 +260,41 @@ export type RedemptionHistoryRow = {
 };
 
 /**
+ * 完整核销历史的状态过滤条件。
+ *
+ * 这是**数据库口径**的取值，与界面上的「全部 / 有效 / 已撤销」不是同一层：
+ * 页面用的是用户语言，service 负责翻译过来（PRD-RED-010）。
+ * `'all'` 表示不加状态条件，两种状态都返回。
+ */
+export type RedemptionStatusFilter = 'all' | 'active' | 'void';
+
+/**
+ * 完整核销历史里的一条记录：核销本身 + 它所属的项目与套餐。
+ *
+ * 机构与城市取的是 `redemption_records` 自己的快照列，**不是**套餐现在的机构：
+ * 快照记的是「那一次实际在哪做的」，套餐后来改了机构也不该改写它
+ * （PRD 第 5A.2 节、PRD-INST-005、PRD-PUR-018）。
+ *
+ * 与 `RedemptionHistoryRow` 的区别：那个是套餐详情内的历史，已知属于哪个套餐；
+ * 这里跨套餐，所以必须带上套餐 ID 与名称，点击才知道要跳到哪一页。
+ */
+export type RedemptionHistoryEntryRow = {
+  readonly id: string;
+  readonly purchase_item_id: string;
+  readonly item_name: string;
+  readonly purchase_id: string;
+  readonly purchase_name: string;
+  readonly redeemed_on: BusinessDate;
+  readonly status: RedemptionStatus;
+  readonly institution_name_snapshot: string | null;
+  readonly city_snapshot: string | null;
+  readonly notes: string | null;
+  readonly created_at: UtcTimestamp;
+  readonly voided_at: UtcTimestamp | null;
+  readonly void_reason: string | null;
+};
+
+/**
  * 撤销核销所需的上下文：核销记录本身，加上它所属的项目与套餐。
  *
  * 一次查询同时回答三个问题：记录在不在、属不属于这个档案、现在是不是有效。
@@ -287,6 +322,20 @@ export type RedemptionRepository = {
   countActiveByItem(purchaseItemId: string): Promise<number>;
   /** 套餐下的全部核销记录，按核销日期倒序、同日按创建时间倒序。 */
   listByPurchase(purchaseId: string): Promise<RedemptionHistoryRow[]>;
+  /**
+   * 当前档案下**跨套餐**的全部核销记录，按 `filter` 过滤状态。
+   *
+   * 排序为 `redeemed_on DESC, created_at DESC, id DESC`。第三列是稳定性保险：
+   * 同一天同一毫秒导入的两条记录若只比前两列，返回顺序由 SQLite 自行决定，
+   * 两次查询可能不一致，分组后看起来就像记录在跳动。
+   *
+   * 已用完与已过期套餐下的记录照常返回：它们仍然是发生过的事实。
+   * 已被永久删除的套餐不会出现——那些记录在删除时已随套餐物理消失（ADR-016）。
+   */
+  listHistory(
+    profileId: string,
+    filter: RedemptionStatusFilter,
+  ): Promise<RedemptionHistoryEntryRow[]>;
   /** 按 ID 读取一条核销及其项目与套餐，同时校验档案归属；不存在时返回 null。 */
   findById(profileId: string, redemptionId: string): Promise<RedemptionContextRow | null>;
   /**

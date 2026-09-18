@@ -36,8 +36,10 @@ export type {
   RecentRedemptionRow,
   RedeemableItemRow,
   RedemptionContextRow,
+  RedemptionHistoryEntryRow,
   RedemptionHistoryRow,
   RedemptionRepository,
+  RedemptionStatusFilter,
   RepositoryBundle,
 } from './repositories';
 

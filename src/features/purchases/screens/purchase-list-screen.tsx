@@ -2,7 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 
-import { Button, Chip, ChipRow, EmptyState, InlineNotice, Screen } from '@/components/ui';
+import { Button, Chip, ChipRow, EmptyState, InlineNotice, Screen, SectionHeader } from '@/components/ui';
 import { Layout, Spacing } from '@/theme';
 import { PurchaseCard } from '../components/purchase-card';
 import { PurchaseCardSkeleton } from '../components/purchase-card-skeleton';
@@ -51,6 +51,12 @@ export function PurchaseListScreen() {
     [router],
   );
 
+  const openHistory = useCallback(() => {
+    // 同样压在记录 Tab 的栈里，Tab 栏保持显示；返回时本页的筛选状态还在，
+    // 因为这个页面并没有被卸载（任务书第三节）。
+    router.push('/(tabs)/records/history');
+  }, [router]);
+
   const renderItem = useCallback(
     ({ item }: { item: PurchaseSummary }) => (
       <PurchaseCard summary={item} onPress={openDetail} />
@@ -96,6 +102,13 @@ export function PurchaseListScreen() {
             />
           ))}
         </ChipRow>
+
+        {/*
+          核销历史的入口做成区块标题右侧的文字按钮：它是次要入口，
+          不能和底部那个实心的「添加套餐」抢层级，一屏也只允许一个实心主按钮
+          （UI_REFERENCE 第 10 章、任务书第三节）。
+        */}
+        <SectionHeader title="套餐" actionLabel="查看全部核销记录" onActionPress={openHistory} />
 
         {status === 'error' ? (
           <InlineNotice

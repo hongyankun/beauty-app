@@ -16,6 +16,9 @@ const MAX_YEAR = 2999;
 
 const SHAPE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+/** `YYYY-MM` 月份键的形状，仅用于格式化标题。 */
+const MONTH_KEY_PATTERN = /^(\d{4})-(\d{2})$/;
+
 export type BusinessDateParseFailure =
   | 'empty'
   /** 不是 `YYYY-MM-DD` 形状 */
@@ -113,4 +116,32 @@ export function compareBusinessDates(left: string, right: string): number {
     return -1;
   }
   return left > right ? 1 : 0;
+}
+
+/**
+ * 取业务日期所属的自然月份键，形如 `2026-09`。
+ *
+ * 就是截前 7 个字符，**不经过 `Date`**：`new Date('2026-09-01')` 会按 UTC 解析，
+ * 在西半球取回本地月份时可能退到 8 月，历史列表就会把 9 月 1 日那条
+ * 分到「2026年8月」下面。业务日期没有时刻，也就没有时区可转（任务书第六节）。
+ *
+ * 形状不对时原样返回：分组键的唯一要求是「同月相同、异月不同」，
+ * 与其编一个月份出来，不如让这条异常数据自成一组，仍然可见。
+ */
+export function businessDateMonthKey(value: string): string {
+  return SHAPE_PATTERN.test(value) ? value.slice(0, 7) : value;
+}
+
+/**
+ * 把月份键格式化为中文标题，例如 `2026-09` → `2026年9月`。
+ *
+ * 月份去掉前导零，符合中文习惯；同样是纯字符串处理，不做任何时区换算。
+ * 不是合法月份键时原样返回，让调用方至少还能看到原始值。
+ */
+export function formatBusinessMonthLabel(monthKey: string): string {
+  const match = MONTH_KEY_PATTERN.exec(monthKey);
+  if (match === null) {
+    return monthKey;
+  }
+  return `${match[1]}年${Number(match[2])}月`;
 }
