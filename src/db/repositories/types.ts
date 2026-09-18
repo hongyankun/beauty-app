@@ -85,6 +85,33 @@ export type RedeemableItemRow = {
 };
 
 /**
+ * 一个「有有效期的套餐」下的**一个项目**的数量事实。
+ *
+ * 临期提醒需要套餐级的剩余次数，但那个数必须按项目分别算完再求和：
+ * `SUM(MAX(0, quantity − active_count))`，而不是
+ * `MAX(0, SUM(quantity) − SUM(active_count))`。后者在异常数据下会互相抵消——
+ * 某个项目被多核销了一次，就会悄悄吃掉另一个项目真实剩下的一次。
+ *
+ * 所以这里返回的是**项目粒度的原始事实**，一个项目一行，同一个套餐的行
+ * 重复携带套餐字段；求和与夹零由 service 完成（ADR-013：库里没有 remaining）。
+ *
+ * `expires_on` 在这里是非空的：语句本身已经排除了没有有效期的套餐
+ * （它们表示未知或长期有效，不参与临期判断，见 E-10）。
+ */
+export type DatedPurchaseItemFactRow = {
+  readonly purchase_id: string;
+  readonly purchase_name: string;
+  readonly purchase_date: BusinessDate;
+  readonly expires_on: BusinessDate;
+  readonly institution_name_snapshot: string | null;
+  readonly city_snapshot: string | null;
+  readonly item_id: string;
+  readonly quantity: number;
+  /** 该项目的有效核销数（只数 `status = 'active'`），已撤销的不算 */
+  readonly active_redemption_count: number;
+};
+
+/**
  * 编辑套餐时每个现存项目的安全上下文。
  *
  * 比 `PurchaseItemDetailRow` 多一列 `redemption_count`：它统计**全部**核销记录，
@@ -129,6 +156,14 @@ export type PurchaseRepository = {
    * 过期的项目照样返回：有效期不影响余次，也不禁止核销（ADR-017、PRD-RED-014）。
    */
   listRedeemableItems(profileId: string): Promise<RedeemableItemRow[]>;
+  /**
+   * 当前档案下**填写了有效期**的套餐，按项目逐行返回数量事实。
+   *
+   * 只筛「有没有有效期」这一个数据库事实，**不判断今天是哪天、也不判断
+   * 30 天窗口**：那是随设备日历变化的业务判断，属于 service（任务书第十节）。
+   * 同样不返回剩余次数——它由调用方按项目夹零后求和。
+   */
+  listDatedPurchaseItemFacts(profileId: string): Promise<DatedPurchaseItemFactRow[]>;
   /** 按 ID 读取单个套餐，同时校验归属于该档案；不存在时返回 null。 */
   findById(profileId: string, purchaseId: string): Promise<PurchaseRow | null>;
   /**

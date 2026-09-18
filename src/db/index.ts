@@ -23,6 +23,7 @@ export type {
   DashboardRepository,
   DashboardTotalsRow,
   DataAccess,
+  DatedPurchaseItemFactRow,
   InstitutionOption,
   InstitutionRepository,
   PurchaseDeletionImpactRow,

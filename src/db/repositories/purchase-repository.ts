@@ -2,6 +2,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import type { PurchaseRow } from '../types';
 import type {
+  DatedPurchaseItemFactRow,
   PurchaseDeletionImpactRow,
   PurchaseItemContextRow,
   PurchaseItemDetailRow,
@@ -87,6 +88,42 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
                    p.purchase_date DESC,
                    i.created_at ASC,
                    i.rowid ASC`,
+        [profileId],
+      );
+    },
+
+    async listDatedPurchaseItemFacts(profileId) {
+      // 一行一个项目，套餐字段随行重复。刻意**不在 SQL 里求套餐总剩余**：
+      // 那需要先对每个项目夹零再求和，写成 SQL 既绕又容易被后来者简化成
+      // `MAX(0, SUM(quantity) - SUM(active_count))`——那个写法会让一个项目的
+      // 超额核销抵消另一个项目真实剩下的次数（见 DatedPurchaseItemFactRow 注释）。
+      //
+      // 有效核销数仍用相关子查询，与 listItemDetails 一致：这里的行数受限于
+      // 「填了有效期的套餐」，不像快捷核销那样要扫全档案的项目。
+      //
+      // `expires_on IS NOT NULL` 正好命中部分索引 idx_purchases_profile_expires。
+      // 没填有效期的套餐在这一层就被排除，上层不必再判一次（E-10）。
+      //
+      // 排序只求稳定：同一个套餐的项目行必定相邻，两次查询顺序一致。
+      // 最终展示顺序由 service 按「已过期 / 30 天内」分别排，不依赖这里。
+      return db.getAllAsync<DatedPurchaseItemFactRow>(
+        `SELECT
+            p.id   AS purchase_id,
+            p.name AS purchase_name,
+            p.purchase_date,
+            p.expires_on,
+            p.institution_name_snapshot,
+            p.city_snapshot,
+            i.id   AS item_id,
+            i.quantity,
+            (SELECT COUNT(*)
+               FROM redemption_records r
+              WHERE r.purchase_item_id = i.id AND r.status = 'active') AS active_redemption_count
+           FROM purchases p
+           JOIN purchase_items i ON i.purchase_id = p.id
+          WHERE p.profile_id = ? AND p.expires_on IS NOT NULL
+          ORDER BY p.expires_on ASC, p.purchase_date DESC, p.id ASC,
+                   i.created_at ASC, i.rowid ASC`,
         [profileId],
       );
     },

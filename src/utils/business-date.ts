@@ -105,6 +105,48 @@ export function todayBusinessDate(now: Date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+/** 一天的毫秒数。只用于两个「同为 UTC 中午」的瞬间相减。 */
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * 把业务日期转成 UTC 当天中午的时间戳。
+ *
+ * 选中午而不是零点：零点距离时区边界只有一步，任何一点偏移都会落到前后一天；
+ * 中午两侧各有 12 小时余量，即便将来换成本地时区构造也不会跨日。
+ * 这里只做算术，不读取设备时区，因此同一对日期在任何时区都得到同一个差值。
+ */
+function toUtcNoonMillis(value: string): number | null {
+  const parsed = parseBusinessDate(value);
+  if (!parsed.ok) {
+    return null;
+  }
+  const match = SHAPE_PATTERN.exec(parsed.value);
+  if (match === null) {
+    return null;
+  }
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+}
+
+/**
+ * 两个业务日期相差多少个自然日，`to` 晚于 `from` 时为正。
+ *
+ * 只数日历上翻过几页，不考虑时刻：`2026-09-18 → 2026-09-19` 恒为 1，
+ * 无论设备处在哪个时区、这一天有没有夏令时切换（两端都是 UTC 中午，
+ * 夏令时根本不参与运算）。
+ *
+ * 任一侧不是真实存在的日期时返回 null——返回 0 会被调用方误当成「同一天」，
+ * 那比读不出来更糟。
+ */
+export function differenceInCalendarDays(from: string, to: string): number | null {
+  const fromMillis = toUtcNoonMillis(from);
+  const toMillis = toUtcNoonMillis(to);
+  if (fromMillis === null || toMillis === null) {
+    return null;
+  }
+  // 两端都在 UTC 中午，差值必是整天的整数倍；round 只是防浮点误差。
+  return Math.round((toMillis - fromMillis) / MS_PER_DAY);
+}
+
 /**
  * 比较两个业务日期，返回负数 / 0 / 正数。
  *
