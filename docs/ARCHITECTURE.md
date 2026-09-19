@@ -2,8 +2,10 @@
 
 > **本文件描述目标架构，尚未完整实施。**
 > 这里记录的是"将来要长成的样子"和"现在就必须遵守的原则"，不代表当前代码已经如此。
-> 当前代码处于 R0 骨架阶段：已落地设计 token、共享 UI 组件、五个一级 Tab 的路由骨架，
-> 以及本地数据库的连接、版本化迁移与第一版表结构；尚无业务逻辑、repository 与网络层。
+> 当前代码处于 **R1 本地业务闭环**阶段：已落地设计 token、共享 UI 组件、五个一级 Tab 的路由骨架，
+> 本地数据库的连接、版本化迁移（migration 1 与 migration 2）与表结构，
+> 以及 **repository / service 分层**与建立在其上的套餐、项目与核销闭环、机构管理和心愿单。
+> 尚无账号、网络层与云同步（Phase 3）。
 
 相关文档：[项目简介](./PROJECT_BRIEF.md) · [决策记录](./DECISIONS.md) · [路线图](./ROADMAP.md)
 
@@ -34,8 +36,9 @@
 
 ## 三、本地持久化（expo-sqlite）
 
-> 本节的**数据库基础部分已落地**：expo-sqlite 依赖、版本化迁移机制、第一版表结构与数据库 Provider 已实现。
-> service、repository 与离线队列**尚未实现**。决策依据见 [ADR-013](./DECISIONS.md#adr-013-本地持久化使用-expo-sqlite)。
+> 本节的**数据库基础与 repository / service 分层均已落地**：expo-sqlite 依赖、版本化迁移机制、
+> migration 1 与 migration 2 的表结构、数据库 Provider、repository 实现与 feature 内的 service 用例都已实现。
+> 离线操作队列**尚未实现**（随 Phase 3 云同步一并设计）。决策依据见 [ADR-013](./DECISIONS.md#adr-013-本地持久化使用-expo-sqlite)。
 
 核心业务数据使用 **expo-sqlite**，不使用 AsyncStorage 或 JSON 文件作为主存储（轻量偏好设置除外）。第一阶段不引入 ORM。
 
@@ -64,7 +67,7 @@ SQLite           expo-sqlite，表、索引与迁移
 - 业务主键使用 UUID 字符串，不使用自增 ID。
 - `remaining` 不落库，由 service 层派生。
 
-**已落地的实现**（`src/db/` 与 `src/providers/`）：
+**已落地的实现**（`src/db/`、`src/providers/`、`src/hooks/` 与 `src/features/`）：
 
 | 文件 | 职责 |
 | --- | --- |
@@ -72,8 +75,14 @@ SQLite           expo-sqlite，表、索引与迁移
 | `db/types.ts` | 各表的行类型与 `Migration` 类型，属性名与列名一致，不做驼峰转换 |
 | `db/migrations.ts` | 全部版本化迁移与其 SQL；`LATEST_SCHEMA_VERSION` 由迁移列表派生 |
 | `db/initialize-database.ts` | 唯一的初始化入口：开启 PRAGMA、读取 `user_version`、按序执行未执行的迁移 |
+| `db/run-in-transaction.ts` | 统一的事务边界（原生独占事务，Web 退化为普通事务），失败整体回滚 |
+| `db/repositories/types.ts` | repository **接口**与查询行类型。service 只依赖这一层，不依赖 SQLite |
+| `db/repositories/*-repository.ts` | 机构、套餐、核销、首页概览、心愿单五组 SQLite 实现；全部参数化绑定，WHERE 一律带 `profile_id` |
+| `db/repositories/data-access.ts` | 把一组 repository 绑到一条连接上，并提供 `transaction()`；SQLite 泄漏到上层的最后一站 |
 | `db/index.ts` | 数据库层对外出口 |
 | `providers/database-provider.tsx` | 打开数据库、触发迁移，并呈现初始化的加载、失败与重试状态 |
+| `hooks/use-data-access.ts` | 页面与 service 取得 `DataAccess` 的唯一入口 |
+| `features/*/services/` | 各领域的 service 用例：业务校验、事务边界、派生计算与中文错误映射 |
 
 **迁移机制**：每条迁移是一个 `{ version, name, up }`，`version` 从 1 开始连续递增。
 `initializeDatabase` 只执行 `version` 大于当前 `user_version` 的迁移，每条包在一个事务里
@@ -91,12 +100,22 @@ SQLite           expo-sqlite，表、索引与迁移
 | `purchase_items` | `purchase_id`、`name`、`category`、`quantity`、`unit_amount_minor` | `unit_amount_minor` 为必填整数分且 `>= 0`，0 表示赠送项目；分摊总额 = 单价 × 次数，派生不落库；`purchase_id` 为 `ON DELETE CASCADE` |
 | `redemption_records` | `purchase_item_id`、机构与城市快照、`redeemed_on`、`status`、`voided_at`、`void_reason` | `status` 仅 `active` / `void`，表级 CHECK 保证 `void` 必有 `voided_at`；`purchase_item_id` 为 `ON DELETE CASCADE` |
 
+**心愿单表（migration 2）**：
+
+| 表 | 关键列 | 说明 |
+| --- | --- | --- |
+| `wishlist_items` | `profile_id`、`name`、`category`、`institution_id`、`planned_on`、`budget_minor`、`notes` | 只有 `name` 必填；`category` 复用 `purchase_items` 的分类取值；`institution_id` 为 `ON DELETE RESTRICT`；**不存机构名称快照**，列表 LEFT JOIN 机构当前名称；无状态、无优先级、无提醒列，无软删除列 |
+
+机构快照在这里**刻意与购买、核销相反**：后两者记录"那一次实际发生时的事实"，必须冻结当时的名称与城市；
+心愿记录的是"现在还想去哪"，机构改名后应当显示新名称（[PRD 第 11.2 节](./PRODUCT_REQUIREMENTS.md#112-心愿单wishlistitem)）。
+migration 2 只创建新结构，不触碰 V1 的任何表、外键与数据。
+
 **删除与作废在结构上的体现**：套餐是**永久删除**——没有 `deleted_at`，没有回收站，
 删除 `purchases` 一行即经外键级联清除其项目与核销记录，机构与档案不受影响；
 单条核销的纠错是**作废**而非删除，记录保留并写入 `voided_at` 与 `void_reason`，
 余次只统计 `active`（[ADR-016](./DECISIONS.md#adr-016-套餐永久删除核销记录使用作废机制)）。
-**当前只完成了数据库结构**：级联删除靠外键保证，但"删除套餐"的业务操作、
-二次确认 UI 与作废流程**尚未实现**。
+心愿同样是永久删除，但它不被任何表引用，删除只影响自己那一行。
+级联由外键保证，"删除套餐""撤销核销""删除心愿"的业务操作与二次确认 UI **均已实现**。
 
 **尚未进入 schema 的字段**：Account 归属字段延后到账号与云端阶段（Phase 3），
 `catalogEntryId` 延后到百科 schema 阶段（Phase 4），两者都通过后续迁移追加，不改 migration 1。
@@ -105,9 +124,13 @@ SQLite           expo-sqlite，表、索引与迁移
 不含任何 SQL；迁移就绪前不渲染任何页面。第一版首次初始化只写入一个默认 Profile，
 不生成任何示例业务数据。
 
-**尚未实现**：repository、service 用例、离线操作队列，以及与之相关的业务页面。
-第一版**没有任何业务 CRUD 落地**，包括套餐、项目与核销的增删改查。
-repository 实现将来落在 `src/db/` 之下，页面仍不得直接执行 SQL。
+**已落地的业务闭环**：套餐、套餐项目与核销（新增、编辑、撤销、永久删除、余次派生、核销历史、
+临期提醒）、机构管理（编辑、判重、归档与恢复）、心愿单（新增、编辑、永久删除）与百科浏览，
+均已按"页面 → service → repository → SQLite"的方向落地，页面不执行 SQL。
+
+**尚未实现**：离线操作队列、账号与网络层，以及依赖它们的云同步与冲突处理（Phase 3）。
+repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 feature 的 `services/` 里；
+新增功能沿用同一分层，页面仍不得直接执行 SQL。
 
 ## 四、基础数据原则
 
@@ -140,15 +163,15 @@ repository 实现将来落在 `src/db/` 之下，页面仍不得直接执行 SQL
 
 ## 六、推荐目录结构
 
-> 目录随功能开发逐步落地，不预先创建空目录。截至当前，已落地 `app/`、`components/`、`db/`、`hooks/`、`providers/`、`theme/`。
+> 目录随功能开发逐步落地，不预先创建空目录。截至当前，已落地 `app/`、`components/`、`db/`、`features/`、`hooks/`、`providers/`、`theme/`、`utils/`；`services/`（网络层）与 `types/` 尚未需要。
 
 ```
 src/
   app/         路由与布局，只放页面文件
-  features/    按业务领域组织的功能模块
+  features/    按业务领域组织的功能模块（当前：purchases、institutions、wishlist、catalog、home）
   components/  跨 feature 复用的展示组件
-  services/    网络请求与外部接口封装
-  db/          SQLite 连接常量、版本化迁移与初始化；repository 实现与离线队列将来也放这里
+  services/    网络请求与外部接口封装（尚未建立；feature 内的 service 用例放在各自的 features/*/services/）
+  db/          SQLite 连接常量、版本化迁移与初始化，以及 repositories/ 下的数据访问实现；离线队列将来也放这里
   providers/   跨页面的 React Provider（当前只有数据库 Provider）
   hooks/       跨 feature 复用的 hooks
   theme/       设计 token：颜色、间距、圆角、字体、阴影

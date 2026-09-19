@@ -8,6 +8,7 @@ import type {
   RedemptionStatus,
   SqliteBoolean,
   UtcTimestamp,
+  WishlistItemRow,
 } from '../types';
 
 /**
@@ -543,11 +544,66 @@ export type DashboardRepository = {
 };
 
 /** 一组绑定在同一个连接（或同一个事务）上的 repository。 */
+/**
+ * 心愿单列表的一行：心愿主数据 + 它关联机构的**当前**名称与归档状态。
+ *
+ * 机构名称从 `institutions` 联出来，不是快照：心愿指向的是「现在还想去的
+ * 那家机构」，机构改名后心愿卡片应当显示新名字（PRD 第 11 章）。
+ * 这与购买、核销上的 `institution_name_snapshot` 刚好相反，两者不可互换。
+ *
+ * `institution_is_archived` 一并返回，是为了让编辑页知道「原来关联的这家
+ * 已经归档了」——归档不会自动清空既有关联，但界面要把状态说出来。
+ */
+export type WishlistItemListRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly category: PurchaseItemCategory | null;
+  readonly institution_id: string | null;
+  readonly institution_name: string | null;
+  readonly institution_is_archived: SqliteBoolean | null;
+  readonly planned_on: BusinessDate | null;
+  readonly budget_minor: number | null;
+  readonly notes: string | null;
+  readonly created_at: UtcTimestamp;
+  readonly updated_at: UtcTimestamp;
+};
+
+/** 更新一条心愿时允许改写的列；`id` 与 `profile_id` 只用于定位。 */
+export type WishlistItemUpdate = {
+  readonly id: string;
+  readonly profile_id: string;
+  readonly name: string;
+  readonly category: PurchaseItemCategory | null;
+  readonly institution_id: string | null;
+  readonly planned_on: BusinessDate | null;
+  readonly budget_minor: number | null;
+  readonly notes: string | null;
+  readonly updated_at: UtcTimestamp;
+};
+
+export type WishlistRepository = {
+  /**
+   * 当前档案下的全部心愿，按 `updated_at DESC, created_at DESC, id DESC`。
+   *
+   * 第三列是稳定性保险：同一毫秒写入的两条心愿若只比前两列，
+   * 返回顺序由 SQLite 自行决定，两次查询可能不一致。
+   */
+  listByProfile(profileId: string): Promise<WishlistItemListRow[]>;
+  /** 按 ID 读取一条心愿（含机构当前名称与归档状态），同时校验归属；不存在时返回 null。 */
+  findById(profileId: string, wishlistItemId: string): Promise<WishlistItemListRow | null>;
+  insert(row: WishlistItemRow): Promise<void>;
+  /** 更新一条心愿，返回实际更新的行数（正常为 1）。 */
+  update(row: WishlistItemUpdate): Promise<number>;
+  /** 永久删除一条心愿，返回实际删除的行数（正常为 1）。没有回收站。 */
+  deletePermanently(profileId: string, wishlistItemId: string): Promise<number>;
+};
+
 export type RepositoryBundle = {
   readonly institutions: InstitutionRepository;
   readonly purchases: PurchaseRepository;
   readonly redemptions: RedemptionRepository;
   readonly dashboard: DashboardRepository;
+  readonly wishlist: WishlistRepository;
 };
 
 /**

@@ -97,6 +97,30 @@ export type RedemptionRecordRow = {
 };
 
 /**
+ * 心愿：用户主动记下的、以后想进一步了解或体验的项目。
+ *
+ * 只保存用户自己填的内容。没有完成状态、优先级与提醒；
+ * 也不保存机构名称快照——心愿指向的是「现在还想去的那家机构」，
+ * 展示时读机构当前名称（与购买、核销的历史快照口径相反，PRD 第 11 章）。
+ */
+export type WishlistItemRow = {
+  id: string;
+  profile_id: string;
+  name: string;
+  /** 选填。取值复用套餐项目的分类，不另建同义分类体系。 */
+  category: PurchaseItemCategory | null;
+  /** 选填。只能引用已有机构，机构归档后既有关联仍然保留。 */
+  institution_id: string | null;
+  /** 选填的计划日期，允许早于今天。 */
+  planned_on: BusinessDate | null;
+  /** 选填的预算，整数分，允许为 0，不允许为负（ADR-006）。 */
+  budget_minor: number | null;
+  notes: string | null;
+  created_at: UtcTimestamp;
+  updated_at: UtcTimestamp;
+};
+
+/**
  * 一次版本迁移。
  *
  * `version` 必须是从 1 开始连续递增的整数，不允许随机值。

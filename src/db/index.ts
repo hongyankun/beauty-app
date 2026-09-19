@@ -45,6 +45,9 @@ export type {
   RedemptionRepository,
   RedemptionStatusFilter,
   RepositoryBundle,
+  WishlistItemListRow,
+  WishlistItemUpdate,
+  WishlistRepository,
 } from './repositories';
 
 export type {
@@ -59,4 +62,5 @@ export type {
   RedemptionStatus,
   SqliteBoolean,
   UtcTimestamp,
+  WishlistItemRow,
 } from './types';

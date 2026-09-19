@@ -202,10 +202,78 @@ const migration001: Migration = {
 };
 
 /**
- * 全部迁移，按 version 升序。新增 V2、V3 时在数组末尾追加一个 `Migration`，
+ * V2 建表语句：心愿单。
+ *
+ * 心愿是**用户主动记下的关注对象**，不是系统推荐，也不是医疗建议
+ * （PRD 第 11 章、ADR-009）。因此这张表只存用户自己填的字段：
+ * - 不存完成状态、优先级、提醒时间，首版没有这些概念；
+ * - 不存机构名称快照，列表显示机构当前名称（与购买、核销刻意相反：
+ *   购买与核销记录的是「那一次发生时的事实」，心愿记录的是「现在想去哪」）；
+ * - 不存任何派生数据。
+ *
+ * `category` 直接复用套餐项目的分类取值，不另起一套同义分类。
+ * `institution_id` 与 `purchases`、`redemption_records` 同口径用 ON DELETE RESTRICT：
+ * 机构没有删除入口，生命周期由归档管理（ADR-014、ADR-016），
+ * RESTRICT 保证不会出现悬空引用，也不会悄悄把用户填的机构清成空。
+ * 归档只影响选择列表，不影响既有关联，因此归档后这条心愿仍然指向原机构。
+ */
+const V2_TABLES: readonly string[] = [
+  `CREATE TABLE wishlist_items (
+     id             TEXT    NOT NULL PRIMARY KEY,
+     profile_id     TEXT    NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+     name           TEXT    NOT NULL CHECK (length(trim(name)) > 0),
+     category       TEXT    CHECK (category IS NULL OR category IN (${CATEGORY_VALUES_SQL})),
+     institution_id TEXT    REFERENCES institutions (id) ON DELETE RESTRICT,
+     planned_on     TEXT    CHECK (
+                              planned_on IS NULL
+                              OR planned_on GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+                            ),
+     budget_minor   INTEGER CHECK (budget_minor IS NULL OR budget_minor >= 0),
+     notes          TEXT,
+     created_at     TEXT    NOT NULL,
+     updated_at     TEXT    NOT NULL
+   )`,
+];
+
+/**
+ * V2 索引。
+ *
+ * 只建一条：心愿单列表是本表唯一的查询路径，按档案取、按
+ * `updated_at DESC, created_at DESC, id DESC` 排序。索引列写成 ASC，
+ * SQLite 反向扫描同一索引即可满足倒序，不需要第二条索引。
+ *
+ * 刻意**不为** `institution_id` 建索引：机构没有删除入口，
+ * 不存在父表删除时反查子表的场景，也没有「按机构筛选心愿」的功能。
+ */
+const V2_INDEXES: readonly string[] = [
+  `CREATE INDEX idx_wishlist_items_profile_updated
+     ON wishlist_items (profile_id, updated_at, created_at, id)`,
+];
+
+/**
+ * V2：新增心愿单表。
+ *
+ * 只创建新结构，不触碰 V1 的任何表、外键与数据：
+ * 升级后档案、机构、套餐、套餐项目与核销记录原样保留。
+ */
+const migration002: Migration = {
+  version: 2,
+  name: 'wishlist-items',
+  up: async (txn) => {
+    for (const statement of V2_TABLES) {
+      await txn.execAsync(statement);
+    }
+    for (const statement of V2_INDEXES) {
+      await txn.execAsync(statement);
+    }
+  },
+};
+
+/**
+ * 全部迁移，按 version 升序。新增 V3、V4 时在数组末尾追加一个 `Migration`，
  * 不要改动已有条目。
  */
-export const MIGRATIONS: readonly Migration[] = [migration001];
+export const MIGRATIONS: readonly Migration[] = [migration001, migration002];
 
 /** 当前代码期望的 schema 版本。从迁移列表派生，不手工维护，避免与实际迁移脱节。 */
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

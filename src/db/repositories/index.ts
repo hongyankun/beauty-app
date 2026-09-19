@@ -26,4 +26,7 @@ export type {
   RedemptionRepository,
   RedemptionStatusFilter,
   RepositoryBundle,
+  WishlistItemListRow,
+  WishlistItemUpdate,
+  WishlistRepository,
 } from './types';

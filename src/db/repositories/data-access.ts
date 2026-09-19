@@ -6,6 +6,7 @@ import { createInstitutionRepository } from './institution-repository';
 import { createPurchaseRepository } from './purchase-repository';
 import { createRedemptionRepository } from './redemption-repository';
 import type { DataAccess, RepositoryBundle } from './types';
+import { createWishlistRepository } from './wishlist-repository';
 
 /** 把一组 repository 绑定到给定连接上。事务内外用的是同一份构造逻辑。 */
 function createRepositoryBundle(db: SQLiteDatabase): RepositoryBundle {
@@ -14,6 +15,7 @@ function createRepositoryBundle(db: SQLiteDatabase): RepositoryBundle {
     purchases: createPurchaseRepository(db),
     redemptions: createRedemptionRepository(db),
     dashboard: createDashboardRepository(db),
+    wishlist: createWishlistRepository(db),
   };
 }
 
