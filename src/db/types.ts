@@ -121,6 +121,22 @@ export type WishlistItemRow = {
 };
 
 /**
+ * 一条百科收藏。
+ *
+ * 只保存「谁收藏了哪篇文章」这个事实：文章正文、标题、摘要与分类都随 App 打包，
+ * 属于本地只读内容，复制进数据库只会在内容更新后留下两份互相矛盾的版本。
+ * 因此这里存的是稳定的文章 slug，展示时再回本地内容里取当前文本。
+ *
+ * 没有备注、没有排序位、没有文件夹、没有阅读状态：首版收藏只有「收了 / 没收」。
+ */
+export type CatalogFavoriteRow = {
+  profile_id: string;
+  /** 本地百科文章的稳定 slug。不是外键：被引用的一侧不在数据库里。 */
+  article_slug: string;
+  created_at: UtcTimestamp;
+};
+
+/**
  * 一次版本迁移。
  *
  * `version` 必须是从 1 开始连续递增的整数，不允许随机值。

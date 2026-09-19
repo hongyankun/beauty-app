@@ -270,10 +270,74 @@ const migration002: Migration = {
 };
 
 /**
- * 全部迁移，按 version 升序。新增 V3、V4 时在数组末尾追加一个 `Migration`，
+ * V3 建表语句：百科收藏。
+ *
+ * 只记录「当前档案收藏了哪篇文章」。百科正文随 App 打包，是本地只读内容，
+ * 因此这张表**不复制**标题、摘要、分类与正文：复制一份进库，内容更新后
+ * 库里那份立刻过时，两处就会各说各话。库里只留稳定的 `article_slug`，
+ * 展示时回本地内容取当前文本。
+ *
+ * `article_slug` 刻意**不建外键**：被引用的一侧根本不是数据库表，
+ * 为本地 TypeScript 内容伪造一张文章表只会带来一个需要持续同步的影子副本。
+ * 文章被下架后留下的孤儿 slug 由 service 层安全忽略，不会渲染出假文章。
+ *
+ * 主键用复合主键 `(profile_id, article_slug)`：
+ * - 这一对就是一条收藏的身份，没有任何表引用它，不需要额外的代理键；
+ * - SQLite 会为复合主键建唯一索引，这正是「同一档案同一篇文章只能有一条收藏」
+ *   所需要的唯一约束，因此不再另建一条 UNIQUE 索引；
+ * - 重复收藏因此在**存储层**就不可能产生第二行，不依赖上层先查后写。
+ */
+const V3_TABLES: readonly string[] = [
+  `CREATE TABLE catalog_favorites (
+     profile_id   TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
+     article_slug TEXT NOT NULL CHECK (length(trim(article_slug)) > 0),
+     created_at   TEXT NOT NULL,
+     PRIMARY KEY (profile_id, article_slug)
+   )`,
+];
+
+/**
+ * V3 索引。
+ *
+ * 只建一条：收藏列表按档案取、按 `created_at DESC, article_slug DESC` 排序，
+ * 而复合主键的索引是 `(profile_id, article_slug)`，帮不上这个排序。
+ * 索引列写成 ASC，SQLite 反向扫描同一索引即可满足倒序。
+ *
+ * 判重、查询单篇状态与取消收藏都走主键索引，不需要第三条索引。
+ */
+const V3_INDEXES: readonly string[] = [
+  `CREATE INDEX idx_catalog_favorites_profile_created
+     ON catalog_favorites (profile_id, created_at, article_slug)`,
+];
+
+/**
+ * V3：新增百科收藏表。
+ *
+ * 只创建新结构，不触碰 V1 与 V2 的任何表、外键与数据：升级后档案、机构、套餐、
+ * 套餐项目、核销记录与心愿全部原样保留。特别地，**不给 `wishlist_items` 加列**：
+ * 从文章进入新增心愿只是一次预填，保存下来的心愿与手动新增的完全一样，
+ * 不与文章保持长期绑定（任务书第 3.2、8.1 节）。
+ *
+ * 首次初始化不写入任何示例收藏。
+ */
+const migration003: Migration = {
+  version: 3,
+  name: 'catalog-favorites',
+  up: async (txn) => {
+    for (const statement of V3_TABLES) {
+      await txn.execAsync(statement);
+    }
+    for (const statement of V3_INDEXES) {
+      await txn.execAsync(statement);
+    }
+  },
+};
+
+/**
+ * 全部迁移，按 version 升序。新增 V4、V5 时在数组末尾追加一个 `Migration`，
  * 不要改动已有条目。
  */
-export const MIGRATIONS: readonly Migration[] = [migration001, migration002];
+export const MIGRATIONS: readonly Migration[] = [migration001, migration002, migration003];
 
 /** 当前代码期望的 schema 版本。从迁移列表派生，不手工维护，避免与实际迁移脱节。 */
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

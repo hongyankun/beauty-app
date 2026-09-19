@@ -1,5 +1,6 @@
 import type {
   BusinessDate,
+  CatalogFavoriteRow,
   InstitutionRow,
   PurchaseItemCategory,
   PurchaseItemRow,
@@ -598,12 +599,38 @@ export type WishlistRepository = {
   deletePermanently(profileId: string, wishlistItemId: string): Promise<number>;
 };
 
+/**
+ * 收藏列表的一行。只有 slug 与收藏时间：标题、摘要与分类来自本地文章内容，
+ * 不从数据库读（任务书第五节）。
+ */
+export type CatalogFavoriteListRow = {
+  readonly article_slug: string;
+  readonly created_at: UtcTimestamp;
+};
+
+export type CatalogFavoriteRepository = {
+  /**
+   * 当前档案下的全部收藏，按 `created_at DESC, article_slug DESC`。
+   *
+   * 第二列是稳定性保险：同一毫秒写入的两条收藏若只比时间，
+   * 返回顺序由 SQLite 自行决定，两次查询可能不一致。
+   */
+  listByProfile(profileId: string): Promise<CatalogFavoriteListRow[]>;
+  /** 这篇文章在当前档案下是否已收藏。 */
+  exists(profileId: string, articleSlug: string): Promise<boolean>;
+  /** 写入一条收藏。复合主键保证同一档案同一篇文章不会出现第二行。 */
+  insert(row: CatalogFavoriteRow): Promise<void>;
+  /** 取消收藏，返回实际删除的行数（未收藏时为 0，不视为失败）。 */
+  delete(profileId: string, articleSlug: string): Promise<number>;
+};
+
 export type RepositoryBundle = {
   readonly institutions: InstitutionRepository;
   readonly purchases: PurchaseRepository;
   readonly redemptions: RedemptionRepository;
   readonly dashboard: DashboardRepository;
   readonly wishlist: WishlistRepository;
+  readonly catalogFavorites: CatalogFavoriteRepository;
 };
 
 /**

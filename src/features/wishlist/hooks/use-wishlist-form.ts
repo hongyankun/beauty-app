@@ -47,7 +47,16 @@ const INVALID_MESSAGE = '还有一处需要修改，请检查下方标红的内�
 
 /** 新增，或编辑某一条既有心愿。 */
 export type WishlistFormMode =
-  | { readonly kind: 'create' }
+  | {
+      readonly kind: 'create';
+      /**
+       * 新增时的初始值，例如从百科文章带过来的名称与分类。
+       *
+       * 省略即全部留空。它只是**初始值**：用户一字未改就返回时不该弹放弃确认，
+       * 因此它同时也是下面脏判断的比较基准（任务书第 8.4 节）。
+       */
+      readonly source?: WishlistDraftSource;
+    }
   | {
       readonly kind: 'edit';
       readonly wishlistItemId: string;
@@ -82,9 +91,14 @@ export function useWishlistForm(mode: WishlistFormMode): WishlistFormController 
   /**
    * 初值只算一次。页面按心愿 ID 给这个组件加了 key，所以这里不需要跟着
    * `mode` 变化重算——重算会把「有没有改动」的比较基准换掉。
+   *
+   * 新增时也可能有初值（从百科文章预填）。它走的是同一条路：既是初始草稿，
+   * 也是脏判断的基准，所以「预填了但一字未改就返回」不会被拦下来问。
    */
   const [initialDraft] = useState<WishlistDraft>(() =>
-    mode.kind === 'edit' ? createWishlistDraftFrom(mode.source) : createEmptyWishlistDraft(),
+    mode.source === undefined
+      ? createEmptyWishlistDraft()
+      : createWishlistDraftFrom(mode.source),
   );
   const [draft, setDraft] = useState<WishlistDraft>(initialDraft);
   const [errors, setErrors] = useState<WishlistFormErrors | null>(null);

@@ -35,6 +35,13 @@ export type ButtonProps = {
    * 否则读屏用户听到的全是同一句话，分不清在操作哪一项。
    */
   accessibilityLabel?: string;
+  /**
+   * 这个按钮表达的是一个**开关状态**（例如「收藏文章 / 已收藏」）。
+   *
+   * 给出后会写进 `accessibilityState.selected`，读屏用户听得到「已选中」。
+   * 状态本身仍必须由 `label` 说清楚，不能只靠这个属性和颜色（PRD-NFR-005）。
+   */
+  selected?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -47,6 +54,7 @@ export function Button({
   disabledReason,
   loading = false,
   accessibilityLabel,
+  selected,
   style,
 }: ButtonProps) {
   const contentColor = CONTENT_COLORS[variant];
@@ -62,7 +70,7 @@ export function Button({
           accessibilityLabel ??
           (disabled && disabledReason ? `${label}，${disabledReason}` : label)
         }
-        accessibilityState={{ disabled: !isInteractive, busy: loading }}
+        accessibilityState={{ disabled: !isInteractive, busy: loading, selected }}
         style={({ pressed }) => [
           styles.base,
           VARIANT_STYLES[variant],

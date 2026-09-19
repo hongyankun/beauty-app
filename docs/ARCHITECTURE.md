@@ -3,7 +3,7 @@
 > **本文件描述目标架构，尚未完整实施。**
 > 这里记录的是"将来要长成的样子"和"现在就必须遵守的原则"，不代表当前代码已经如此。
 > 当前代码处于 **R1 本地业务闭环**阶段：已落地设计 token、共享 UI 组件、五个一级 Tab 的路由骨架，
-> 本地数据库的连接、版本化迁移（migration 1 与 migration 2）与表结构，
+> 本地数据库的连接、版本化迁移（migration 1 至 migration 3）与表结构，
 > 以及 **repository / service 分层**与建立在其上的套餐、项目与核销闭环、机构管理和心愿单。
 > 尚无账号、网络层与云同步（Phase 3）。
 
@@ -37,7 +37,7 @@
 ## 三、本地持久化（expo-sqlite）
 
 > 本节的**数据库基础与 repository / service 分层均已落地**：expo-sqlite 依赖、版本化迁移机制、
-> migration 1 与 migration 2 的表结构、数据库 Provider、repository 实现与 feature 内的 service 用例都已实现。
+> migration 1 至 migration 3 的表结构、数据库 Provider、repository 实现与 feature 内的 service 用例都已实现。
 > 离线操作队列**尚未实现**（随 Phase 3 云同步一并设计）。决策依据见 [ADR-013](./DECISIONS.md#adr-013-本地持久化使用-expo-sqlite)。
 
 核心业务数据使用 **expo-sqlite**，不使用 AsyncStorage 或 JSON 文件作为主存储（轻量偏好设置除外）。第一阶段不引入 ORM。
@@ -110,23 +110,44 @@ SQLite           expo-sqlite，表、索引与迁移
 心愿记录的是"现在还想去哪"，机构改名后应当显示新名称（[PRD 第 11.2 节](./PRODUCT_REQUIREMENTS.md#112-心愿单wishlistitem)）。
 migration 2 只创建新结构，不触碰 V1 的任何表、外键与数据。
 
+**百科收藏表（migration 3）**：
+
+| 表 | 关键列 | 说明 |
+| --- | --- | --- |
+| `catalog_favorites` | `profile_id`、`article_slug`、`created_at` | 复合主键 `(profile_id, article_slug)`：一个档案对同一篇文章最多收藏一次，唯一性就是它的身份，不再另建 UNIQUE 索引。`profile_id` 为 `ON DELETE CASCADE`；另建 `(profile_id, created_at, article_slug)` 一条索引支撑列表的时间倒序。无备注、无排序位、无文件夹、无阅读状态 |
+
+**这张表只保存「谁收藏了哪篇文章」**：百科正文、标题、摘要与分类随 App 打包，是本地只读内容，
+复制进数据库只会在内容更新后留下两份互相矛盾的版本。因此库里只有稳定的 `article_slug`，
+展示时回本地文章集取当前文本。`article_slug` **不是外键**——被引用的一侧根本不在数据库里，
+不给本地 TypeScript 内容伪造外键约束；文章是否存在由 service 在收藏前核实，
+列表里解析不到的孤立 slug 被安全跳过（只在 `__DEV__` 记录），不渲染假文章、不崩溃。
+migration 3 只创建新表与新索引，不触碰 migration 1、migration 2 的任何表、外键与数据，
+也不写入任何示例收藏。
+
+从百科「加入心愿单」只是**预填新增心愿表单**：保存下来的心愿与手动新增的完全一样，
+`wishlist_items` 不因此增加 `catalog_entry_id` 之类的列，库里不留任何文章标识
+（[PRD 第 11.2 节](./PRODUCT_REQUIREMENTS.md#112-心愿单wishlistitem)）。
+
 **删除与作废在结构上的体现**：套餐是**永久删除**——没有 `deleted_at`，没有回收站，
 删除 `purchases` 一行即经外键级联清除其项目与核销记录，机构与档案不受影响；
 单条核销的纠错是**作废**而非删除，记录保留并写入 `voided_at` 与 `void_reason`，
 余次只统计 `active`（[ADR-016](./DECISIONS.md#adr-016-套餐永久删除核销记录使用作废机制)）。
 心愿同样是永久删除，但它不被任何表引用，删除只影响自己那一行。
+收藏与取消收藏也是真删真插：收藏不是业务记录，没有作废与审计的必要，取消收藏就是 `DELETE` 自己那一行。
 级联由外键保证，"删除套餐""撤销核销""删除心愿"的业务操作与二次确认 UI **均已实现**。
 
-**尚未进入 schema 的字段**：Account 归属字段延后到账号与云端阶段（Phase 3），
-`catalogEntryId` 延后到百科 schema 阶段（Phase 4），两者都通过后续迁移追加，不改 migration 1。
+**尚未进入 schema 的字段**：Account 归属字段延后到账号与云端阶段（Phase 3）；
+`purchase_items.catalog_entry_id`（记录项目与百科标准条目的关联）延后到后续迁移，不改 migration 1。
+百科收藏已由 migration 3 落地，但它只保存 slug，不构成上述关联。
 
 **Provider 职责边界**：`DatabaseProvider` 只负责打开连接、触发迁移与展示初始化状态，
 不含任何 SQL；迁移就绪前不渲染任何页面。第一版首次初始化只写入一个默认 Profile，
 不生成任何示例业务数据。
 
 **已落地的业务闭环**：套餐、套餐项目与核销（新增、编辑、撤销、永久删除、余次派生、核销历史、
-临期提醒）、机构管理（编辑、判重、归档与恢复）、心愿单（新增、编辑、永久删除）与百科浏览，
-均已按"页面 → service → repository → SQLite"的方向落地，页面不执行 SQL。
+临期提醒）、机构管理（编辑、判重、归档与恢复）、心愿单（新增、编辑、永久删除）、百科浏览
+与百科收藏（收藏、取消收藏、收藏列表），均已按"页面 → service → repository → SQLite"的方向落地，
+页面不执行 SQL。
 
 **尚未实现**：离线操作队列、账号与网络层，以及依赖它们的云同步与冲突处理（Phase 3）。
 repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 feature 的 `services/` 里；
