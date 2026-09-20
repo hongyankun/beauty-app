@@ -35,6 +35,7 @@ const ICONS = {
   principle: { ios: 'text.book.closed', android: 'auto_stories', web: 'auto_stories' },
   treatment: { ios: 'sparkles', android: 'spa', web: 'spa' },
   dataExport: { ios: 'arrow.down.doc', android: 'description', web: 'description' },
+  dataImport: { ios: 'arrow.up.doc', android: 'upload_file', web: 'upload_file' },
   institution: { ios: 'building.2', android: 'apartment', web: 'apartment' },
   archive: { ios: 'archivebox', android: 'archive', web: 'archive' },
   privacy: { ios: 'lock.shield', android: 'lock', web: 'lock' },

@@ -77,7 +77,7 @@ SQLite           expo-sqlite，表、索引与迁移
 | `db/initialize-database.ts` | 唯一的初始化入口：开启 PRAGMA、读取 `user_version`、按序执行未执行的迁移 |
 | `db/run-in-transaction.ts` | 统一的事务边界（原生独占事务，Web 退化为普通事务），失败整体回滚 |
 | `db/repositories/types.ts` | repository **接口**与查询行类型。service 只依赖这一层，不依赖 SQLite |
-| `db/repositories/*-repository.ts` | 机构、套餐、核销、首页概览、心愿单、百科收藏与备份七组 SQLite 实现；全部参数化绑定，WHERE 一律带 `profile_id`。`backup-repository.ts` **只读**，每张表一个显式列名的查询，不使用 `SELECT *`，也不做任何派生计算 |
+| `db/repositories/*-repository.ts` | 机构、套餐、核销、首页概览、心愿单、百科收藏、备份与恢复八组 SQLite 实现；全部参数化绑定，WHERE 一律带 `profile_id`。`backup-repository.ts` **只读**，每张表一个显式列名的查询，不使用 `SELECT *`，也不做任何派生计算；`restore-repository.ts` 是唯一会按档案整体删除并原样写回的实现，列名全为字面量，绝不拼接文件内容 |
 | `db/repositories/data-access.ts` | 把一组 repository 绑到一条连接上，并提供 `transaction()`；SQLite 泄漏到上层的最后一站 |
 | `db/index.ts` | 数据库层对外出口 |
 | `providers/database-provider.tsx` | 打开数据库、触发迁移，并呈现初始化的加载、失败与重试状态 |
@@ -146,10 +146,10 @@ migration 3 只创建新表与新索引，不触碰 migration 1、migration 2 �
 
 **已落地的业务闭环**：套餐、套餐项目与核销（新增、编辑、撤销、永久删除、余次派生、核销历史、
 临期提醒）、机构管理（编辑、判重、归档与恢复）、心愿单（新增、编辑、永久删除）、百科浏览
-与百科收藏（收藏、取消收藏、收藏列表）、本地数据备份导出，均已按"页面 → service → repository → SQLite"
+与百科收藏（收藏、取消收藏、收藏列表）、本地数据备份的导出与恢复，均已按"页面 → service → repository → SQLite"
 的方向落地，页面不执行 SQL。
 
-**本地数据备份导出**（`src/features/backup/`）沿用同一分层，但有几条与写入型功能不同的约束：
+**本地数据备份**（`src/features/backup/`）沿用同一分层，但有几条与写入型功能不同的约束：
 
 | 环节 | 职责 |
 | --- | --- |
@@ -160,9 +160,30 @@ migration 3 只创建新表与新索引，不触碰 migration 1、migration 2 �
 | `services/share-backup-file.ts` | 写入缓存目录下一个 UUID 子目录再交给系统分享面板，`finally` 里整目录删除。**唯一**接触 `expo-file-system` 与 `expo-sharing` 的文件 |
 
 **导出是只读操作**：整条链路不含任何 `INSERT` / `UPDATE` / `DELETE`，也不推进 `user_version`。
+
+**恢复（`restore-*`）把备份文件当作不可信输入**，链路与导出方向相反，边界同样固定
+（[ADR-019](./DECISIONS.md#adr-019-从备份恢复采用整体覆盖--单事务备份文件一律当作不可信输入)）：
+
+| 环节 | 职责 |
+| --- | --- |
+| `services/pick-backup-file.ts` | **唯一**接触 `expo-document-picker` 的文件。只拿用户主动选中的那一个；扩展名与 MIME 只是提示，不作为信任依据；绝对路径不进界面、不进日志 |
+| `services/backup-file-limits.ts` | 10 MiB 上限与 UTF-8 字节计数。选择器给的体积先挡一道，读入后按真实内容再量一次 |
+| `services/parse-backup-document.ts` | 体积 → `JSON.parse` → **复用导出侧同一个 validator** → 档案 ID 归一。不可信文本变成 `BackupDocument` 的唯一入口，失败按 `parse` / `validate` / `incompatible` 分类 |
+| `backup-profile-mapping.ts` | 纯函数：把外来档案 ID 归到本机那个固定档案。**集中一处**，界面与 repository 不做临时映射 |
+| `db/repositories/restore-repository.ts` | 删除、写入与事务内自查的全部 SQL。列名全是代码里的字面量，值一律参数化绑定，每条写入检查影响行数 |
+| `services/restore-backup.ts` | 一个独占事务内：复查 schema 版本 → 按子表在前的顺序删除 → 按依赖顺序写回 → 自查行数与六类孤儿引用。任一步抛出即整体回滚 |
+
+**校验在事务外，写入在事务内**：持有独占锁的事务不做与数据库无关的判断。
+**不关闭外键检查，也不依赖它**——独占事务跑在新连接上，`PRAGMA foreign_keys` 不继承，
+BEGIN 之后再开是静默无效的，因此删除顺序、写入顺序与写后自查共同承担引用完整性。
+**恢复不调用正常的写入 service**：那些 service 会生成新 ID 与新 `updated_at`，
+而恢复要把 ID、时间戳、null、整数分金额、`active` / `void` 状态与机构城市快照原样写回。
+
 备份格式的版本（`formatVersion`）与数据库 schema 版本（`databaseSchemaVersion`）是**两件事**，
 分别演进：备份字段结构变化时前者 +1，加表加列时后者由 migration 决定。App 版本号不写入备份。
-备份**不上传任何服务器**，不经过网络层；从备份恢复数据尚未实现，界面上也不放不可用的入口。
+两者都必须显式支持才接受，来自更新版本的备份直接拒绝，不做「尽量恢复」；
+**任何情况下都不因为文件内容修改 `PRAGMA user_version`**，备份不是 migration。
+备份**不上传任何服务器**，不经过网络层。
 
 **尚未实现**：离线操作队列、账号与网络层，以及依赖它们的云同步与冲突处理（Phase 3）。
 repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 feature 的 `services/` 里；
@@ -195,6 +216,7 @@ repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 
 - 第一版不收集照片
 - 日志不得记录完整敏感信息
 - 导出的备份文件与数据库内容同等敏感：只写入 App 缓存目录、用完即删、不上传服务器，内容不打印到日志，失败提示不暴露 SQL、表名、绝对路径与堆栈
+- 恢复读入的备份文件是**不可信输入**：只读用户主动选中的那一个文件，读完即删缓存副本；不执行文件中的任何 SQL、表名或列名；备份内容、用户备注、机构名称与绝对路径都不得进入日志与界面提示
 
 医美消费记录属于敏感个人信息。最小化收集不是可选项，是这个品类的前提，参见 [ADR-008](./DECISIONS.md#adr-008-第一版不做照片功能)。
 

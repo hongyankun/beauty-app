@@ -7,6 +7,7 @@ import { createDashboardRepository } from './dashboard-repository';
 import { createInstitutionRepository } from './institution-repository';
 import { createPurchaseRepository } from './purchase-repository';
 import { createRedemptionRepository } from './redemption-repository';
+import { createRestoreRepository } from './restore-repository';
 import type { DataAccess, RepositoryBundle } from './types';
 import { createWishlistRepository } from './wishlist-repository';
 
@@ -20,6 +21,7 @@ function createRepositoryBundle(db: SQLiteDatabase): RepositoryBundle {
     wishlist: createWishlistRepository(db),
     catalogFavorites: createCatalogFavoriteRepository(db),
     backup: createBackupRepository(db),
+    restore: createRestoreRepository(db),
   };
 }
 

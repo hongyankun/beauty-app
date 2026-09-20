@@ -658,6 +658,82 @@ export type BackupRepository = {
   listCatalogFavorites(profileId: string): Promise<CatalogFavoriteRow[]>;
 };
 
+/**
+ * 恢复后事务内自检用的**全库**行数，不带档案过滤。
+ *
+ * 刻意不按 `profile_id` 过滤：这里要回答的是「库里除了刚写进去的这些，
+ * 还剩下别的吗」。按档案过滤只会把没删干净的行藏起来——恰恰是覆盖式恢复
+ * 最需要发现的问题（任务书第八、十二节）。
+ */
+export type RestoreRowCountsRow = {
+  readonly profiles: number;
+  readonly institutions: number;
+  readonly purchases: number;
+  readonly purchase_items: number;
+  readonly redemption_records: number;
+  readonly wishlist_items: number;
+  readonly catalog_favorites: number;
+};
+
+/**
+ * 恢复后事务内自检用的悬挂引用计数，每一项正常都应为 0。
+ *
+ * 之所以要手工数：`withExclusiveTransactionAsync` 跑在一条新连接上，
+ * `PRAGMA foreign_keys` 不会继承，进了 BEGIN 之后再开也是静默无效的
+ * （见 `run-in-transaction.ts`）。也就是说**事务内根本没有外键在保护我们**。
+ * 与其把这当成理由去关外键（任务书明令禁止），不如把同样的检查自己做一遍：
+ * 校验器在写之前查过一次备份内部的引用，这里在写之后再查一次落库结果，
+ * 任何一项不为 0 就整体回滚。
+ */
+export type RestoreOrphanCountsRow = {
+  readonly orphan_purchase_items: number;
+  readonly orphan_redemption_records: number;
+  readonly dangling_purchase_institutions: number;
+  readonly dangling_redemption_institutions: number;
+  readonly dangling_wishlist_institutions: number;
+  /** 不属于目标档案的业务行数；覆盖式恢复之后必须为 0。 */
+  readonly foreign_profile_rows: number;
+};
+
+/**
+ * 从备份覆盖写回本地数据库的契约。
+ *
+ * 和其它 repository 最大的不同是它**不走正常的新增流程**：没有生成 ID、
+ * 没有盖 `updated_at`、没有归一化名称。恢复要还原的是「当时那份数据」，
+ * 任何一处重新生成都会让恢复出来的库与备份对不上（任务书第三、八节）。
+ *
+ * 所有方法都必须在同一个事务里调用。删除与插入分成多条语句，
+ * 中途失败而没有事务包着，留下的就是一个删了一半的库。
+ */
+export type RestoreRepository = {
+  /**
+   * 读取 `PRAGMA user_version`。
+   *
+   * 恢复事务内要再确认一次：用户挑文件、看摘要、点确认这段时间里，
+   * 库有可能已经被另一条路径迁移过，而校验是在那之前做的。
+   */
+  getSchemaVersion(): Promise<number>;
+  /**
+   * 删除该档案名下的全部业务数据，档案行本身保留。
+   *
+   * 按「子表在前」的顺序逐张清理，不依赖级联：事务里没有外键（见上），
+   * 指望 `ON DELETE CASCADE` 会留下一地孤儿行。
+   */
+  deleteProfileData(profileId: string): Promise<void>;
+  /** 写入档案行：已存在则更新，不存在则插入，始终只留这一条默认档案。 */
+  upsertProfile(row: ProfileRow): Promise<void>;
+  insertInstitutions(rows: readonly InstitutionRow[]): Promise<void>;
+  insertPurchases(rows: readonly PurchaseRow[]): Promise<void>;
+  insertPurchaseItems(rows: readonly PurchaseItemRow[]): Promise<void>;
+  insertRedemptionRecords(rows: readonly RedemptionRecordRow[]): Promise<void>;
+  insertWishlistItems(rows: readonly WishlistItemRow[]): Promise<void>;
+  insertCatalogFavorites(rows: readonly CatalogFavoriteRow[]): Promise<void>;
+  /** 全库行数，用于确认「备份里没有的数据确实已经不在库里了」。 */
+  countAllRows(): Promise<RestoreRowCountsRow>;
+  /** 悬挂引用计数，每一项都应为 0。 */
+  countOrphans(profileId: string): Promise<RestoreOrphanCountsRow>;
+};
+
 export type RepositoryBundle = {
   readonly institutions: InstitutionRepository;
   readonly purchases: PurchaseRepository;
@@ -666,6 +742,7 @@ export type RepositoryBundle = {
   readonly wishlist: WishlistRepository;
   readonly catalogFavorites: CatalogFavoriteRepository;
   readonly backup: BackupRepository;
+  readonly restore: RestoreRepository;
 };
 
 /**
