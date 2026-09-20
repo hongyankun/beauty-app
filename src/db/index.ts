@@ -20,6 +20,7 @@ export { DatabaseInitializationError, initializeDatabase } from './initialize-da
 export { createDataAccess } from './repositories';
 
 export type {
+  BackupRepository,
   CatalogFavoriteListRow,
   CatalogFavoriteRepository,
   DashboardRepository,

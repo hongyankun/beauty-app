@@ -2,6 +2,7 @@ import type {
   BusinessDate,
   CatalogFavoriteRow,
   InstitutionRow,
+  ProfileRow,
   PurchaseItemCategory,
   PurchaseItemRow,
   PurchaseRow,
@@ -624,6 +625,39 @@ export type CatalogFavoriteRepository = {
   delete(profileId: string, articleSlug: string): Promise<number>;
 };
 
+/**
+ * 数据备份的读取契约：按档案把每张业务表**整行**取出来。
+ *
+ * 与其它 repository 刻意不同，这里返回的是 `src/db/types.ts` 里的行类型本身，
+ * 不返回为某一屏裁剪过的视图。备份要能原样还原，缺一列就是缺一份数据；
+ * 派生值（剩余次数、累计金额）则一律不在这里出现——它们能从这些行重新算出来，
+ * 写进备份只会多一份可能过时的副本（任务书第五节）。
+ *
+ * 全部方法只读，且都要求 `profileId`：跨档案读取在 SQL 层就被挡住，
+ * 不依赖调用方自觉（任务书第六节）。
+ */
+export type BackupRepository = {
+  /** 读取档案本身；不存在时返回 null（由上层判定为读取失败）。 */
+  findProfile(profileId: string): Promise<ProfileRow | null>;
+  /** 该档案的全部机构（含已归档），按 `created_at ASC, id ASC`。 */
+  listInstitutions(profileId: string): Promise<InstitutionRow[]>;
+  /** 该档案的全部套餐，按 `created_at ASC, id ASC`。 */
+  listPurchases(profileId: string): Promise<PurchaseRow[]>;
+  /** 该档案全部套餐下的项目，按所属套餐顺序，其次 `created_at ASC, id ASC`。 */
+  listPurchaseItems(profileId: string): Promise<PurchaseItemRow[]>;
+  /**
+   * 该档案全部项目下的核销记录，**含已撤销**，按 `created_at ASC, id ASC`。
+   *
+   * 归属经 `purchase_items → purchases.profile_id` 验证：这两张表自己没有
+   * `profile_id` 列，只能顺着外键往上走。
+   */
+  listRedemptionRecords(profileId: string): Promise<RedemptionRecordRow[]>;
+  /** 该档案的全部心愿，按 `created_at ASC, id ASC`。 */
+  listWishlistItems(profileId: string): Promise<WishlistItemRow[]>;
+  /** 该档案的全部百科收藏，按 `created_at ASC, article_slug ASC`。 */
+  listCatalogFavorites(profileId: string): Promise<CatalogFavoriteRow[]>;
+};
+
 export type RepositoryBundle = {
   readonly institutions: InstitutionRepository;
   readonly purchases: PurchaseRepository;
@@ -631,6 +665,7 @@ export type RepositoryBundle = {
   readonly dashboard: DashboardRepository;
   readonly wishlist: WishlistRepository;
   readonly catalogFavorites: CatalogFavoriteRepository;
+  readonly backup: BackupRepository;
 };
 
 /**

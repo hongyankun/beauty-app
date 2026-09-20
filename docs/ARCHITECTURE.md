@@ -77,7 +77,7 @@ SQLite           expo-sqlite，表、索引与迁移
 | `db/initialize-database.ts` | 唯一的初始化入口：开启 PRAGMA、读取 `user_version`、按序执行未执行的迁移 |
 | `db/run-in-transaction.ts` | 统一的事务边界（原生独占事务，Web 退化为普通事务），失败整体回滚 |
 | `db/repositories/types.ts` | repository **接口**与查询行类型。service 只依赖这一层，不依赖 SQLite |
-| `db/repositories/*-repository.ts` | 机构、套餐、核销、首页概览、心愿单五组 SQLite 实现；全部参数化绑定，WHERE 一律带 `profile_id` |
+| `db/repositories/*-repository.ts` | 机构、套餐、核销、首页概览、心愿单、百科收藏与备份七组 SQLite 实现；全部参数化绑定，WHERE 一律带 `profile_id`。`backup-repository.ts` **只读**，每张表一个显式列名的查询，不使用 `SELECT *`，也不做任何派生计算 |
 | `db/repositories/data-access.ts` | 把一组 repository 绑到一条连接上，并提供 `transaction()`；SQLite 泄漏到上层的最后一站 |
 | `db/index.ts` | 数据库层对外出口 |
 | `providers/database-provider.tsx` | 打开数据库、触发迁移，并呈现初始化的加载、失败与重试状态 |
@@ -146,8 +146,23 @@ migration 3 只创建新表与新索引，不触碰 migration 1、migration 2 �
 
 **已落地的业务闭环**：套餐、套餐项目与核销（新增、编辑、撤销、永久删除、余次派生、核销历史、
 临期提醒）、机构管理（编辑、判重、归档与恢复）、心愿单（新增、编辑、永久删除）、百科浏览
-与百科收藏（收藏、取消收藏、收藏列表），均已按"页面 → service → repository → SQLite"的方向落地，
-页面不执行 SQL。
+与百科收藏（收藏、取消收藏、收藏列表）、本地数据备份导出，均已按"页面 → service → repository → SQLite"
+的方向落地，页面不执行 SQL。
+
+**本地数据备份导出**（`src/features/backup/`）沿用同一分层，但有几条与写入型功能不同的约束：
+
+| 环节 | 职责 |
+| --- | --- |
+| `db/repositories/backup-repository.ts` | 七个**只读**查询，列名显式列出，一律按 `profile_id` 过滤（核销经 `purchase_items → purchases` 两跳归属）。不做派生计算 |
+| `backup-document.ts` | 纯函数 `buildBackupDocument`：把快照装进带 `format` / `formatVersion` / `databaseSchemaVersion` / `exportedAt` 的信封。时间与 schema 版本由调用方注入，便于验证 |
+| `services/read-backup-document.ts` | 七个查询放在**同一个事务**里，保证导出的是一个一致的时间点；组装后立即自校验 |
+| `services/validate-backup-document.ts` | 纯函数结构与不变量校验（字段类型、越档案归属、悬空外键、次数与金额下限、撤销状态一致性）。写出前与读回后各跑一次 |
+| `services/share-backup-file.ts` | 写入缓存目录下一个 UUID 子目录再交给系统分享面板，`finally` 里整目录删除。**唯一**接触 `expo-file-system` 与 `expo-sharing` 的文件 |
+
+**导出是只读操作**：整条链路不含任何 `INSERT` / `UPDATE` / `DELETE`，也不推进 `user_version`。
+备份格式的版本（`formatVersion`）与数据库 schema 版本（`databaseSchemaVersion`）是**两件事**，
+分别演进：备份字段结构变化时前者 +1，加表加列时后者由 migration 决定。App 版本号不写入备份。
+备份**不上传任何服务器**，不经过网络层；从备份恢复数据尚未实现，界面上也不放不可用的入口。
 
 **尚未实现**：离线操作队列、账号与网络层，以及依赖它们的云同步与冲突处理（Phase 3）。
 repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 feature 的 `services/` 里；
@@ -179,6 +194,7 @@ repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 
 - 默认最小化收集个人信息
 - 第一版不收集照片
 - 日志不得记录完整敏感信息
+- 导出的备份文件与数据库内容同等敏感：只写入 App 缓存目录、用完即删、不上传服务器，内容不打印到日志，失败提示不暴露 SQL、表名、绝对路径与堆栈
 
 医美消费记录属于敏感个人信息。最小化收集不是可选项，是这个品类的前提，参见 [ADR-008](./DECISIONS.md#adr-008-第一版不做照片功能)。
 
@@ -189,7 +205,7 @@ repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 
 ```
 src/
   app/         路由与布局，只放页面文件
-  features/    按业务领域组织的功能模块（当前：purchases、institutions、wishlist、catalog、home）
+  features/    按业务领域组织的功能模块（当前：purchases、institutions、wishlist、catalog、home、backup）
   components/  跨 feature 复用的展示组件
   services/    网络请求与外部接口封装（尚未建立；feature 内的 service 用例放在各自的 features/*/services/）
   db/          SQLite 连接常量、版本化迁移与初始化，以及 repositories/ 下的数据访问实现；离线队列将来也放这里

@@ -11,7 +11,7 @@ import { Colors, Layout, Radii, TextStyles } from '@/theme';
  * 第一版只有当前用户本人一个档案（ADR-015）：这里不出现档案切换入口、
  * 不出现多档案管理，也不出现其他使用人。
  *
- * 「数据管理」里目前只有机构管理是真的可用页面，导出与缓存仍是占位。
+ * 「数据管理」里机构管理与数据备份是真的可用页面，清除缓存仍是占位。
  */
 export default function MeScreen() {
   const router = useRouter();
@@ -40,9 +40,15 @@ export default function MeScreen() {
           />
           <ListRow
             icon="dataExport"
-            title="导出与缓存"
-            subtitle="导出个人记录、清除本地缓存"
-            onPress={() => comingSoon('导出与缓存')}
+            title="数据备份"
+            subtitle="把记录导出为备份文件"
+            onPress={() => router.push('/(tabs)/me/backup')}
+          />
+          <ListRow
+            icon="trash"
+            title="清除缓存"
+            subtitle="清理本地临时数据"
+            onPress={() => comingSoon('清除缓存')}
           />
         </ListGroup>
       </View>
