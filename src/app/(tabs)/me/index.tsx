@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Card, Icon, ListGroup, ListRow, Screen, SectionHeader } from '@/components/ui';
+import { ProductInfo } from '@/features/me/components/product-info';
 import { useComingSoon } from '@/hooks/use-coming-soon';
 import { Colors, Layout, Radii, TextStyles } from '@/theme';
 
@@ -12,6 +13,9 @@ import { Colors, Layout, Radii, TextStyles } from '@/theme';
  * 不出现多档案管理，也不出现其他使用人。
  *
  * 「数据管理」里机构管理与数据备份是真的可用页面，清除缓存仍是占位。
+ *
+ * 页脚是产品信息（名称、阶段、版本与数据去向）。它排在所有入口之后、
+ * 不做成卡片，是因为它只回答「这是什么」，不是一个可以操作的功能。
  */
 export default function MeScreen() {
   const router = useRouter();
@@ -70,6 +74,8 @@ export default function MeScreen() {
           />
         </ListGroup>
       </View>
+
+      <ProductInfo />
     </Screen>
   );
 }

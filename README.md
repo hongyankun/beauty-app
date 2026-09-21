@@ -1,4 +1,11 @@
-# Welcome to your Expo app 👋
+# 美迹 / iBeauty
+
+轻医美记录、套餐资产管理与中立科普 App。当前阶段为**本地试用版**：数据保存在设备本机，通过 Expo Go 在 iPhone 上运行。
+
+- 在 iPhone 上试用：[docs/REAL_DEVICE_TESTING.md](docs/REAL_DEVICE_TESTING.md)
+- 产品与工程文档：[docs/](docs/)
+
+---
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
