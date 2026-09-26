@@ -14,6 +14,9 @@ const MIN_YEAR = 1900;
 /** 可填写的年份上限。有效期可能填得较远，留足余量。 */
 const MAX_YEAR = 2999;
 
+/** 年份上下限对外只读暴露，供月历翻页判断边界，不另写第二份。 */
+export { MAX_YEAR as BUSINESS_DATE_MAX_YEAR, MIN_YEAR as BUSINESS_DATE_MIN_YEAR };
+
 const SHAPE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** `YYYY-MM` 月份键的形状，仅用于格式化标题。 */
@@ -32,11 +35,12 @@ export type BusinessDateParseResult =
   | { readonly ok: true; readonly value: string }
   | { readonly ok: false; readonly reason: BusinessDateParseFailure };
 
-function isLeapYear(year: number): boolean {
+export function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 }
 
-function daysInMonth(year: number, month: number): number {
+/** 某年某月（1–12）的真实天数；月份越界时为 0。 */
+export function daysInMonth(year: number, month: number): number {
   switch (month) {
     case 1:
     case 3:
@@ -158,6 +162,80 @@ export function compareBusinessDates(left: string, right: string): number {
     return -1;
   }
   return left > right ? 1 : 0;
+}
+
+/** 已校验的业务日期拆成年、月（1–12）、日。不合法时返回 null。 */
+export function splitBusinessDate(value: string): readonly [number, number, number] | null {
+  const parsed = parseBusinessDate(value);
+  if (!parsed.ok) {
+    return null;
+  }
+  const match = SHAPE_PATTERN.exec(parsed.value);
+  if (match === null) {
+    return null;
+  }
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+/** 年月日拼回 `YYYY-MM-DD`，再走一遍严格校验，拒绝任何被 `Date` 静默滚动的结果。 */
+export function joinBusinessDate(year: number, month: number, day: number): string | null {
+  const text = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const parsed = parseBusinessDate(text);
+  return parsed.ok ? parsed.value : null;
+}
+
+/**
+ * 业务日期 → 设备本地当天中午的 `Date`，交给按本地日历工作的原生日期选择器（iOS）。
+ *
+ * 不用 `new Date('YYYY-MM-DD')`：它按 UTC 零点解析，西半球取本地日期会退一天。
+ * 取中午同样是为了远离零点：夏令时切换发生在凌晨，中午两侧各有 12 小时余量。
+ */
+export function businessDateToLocalDate(value: string): Date | null {
+  const parts = splitBusinessDate(value);
+  if (parts === null) {
+    return null;
+  }
+  return new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0, 0);
+}
+
+/** 本地日历上的 `Date` → 业务日期。只读本地年月日，不经过 `toISOString()`。 */
+export function localDateToBusinessDate(value: Date): string | null {
+  if (Number.isNaN(value.getTime())) {
+    return null;
+  }
+  return joinBusinessDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
+}
+
+/**
+ * 业务日期 → UTC 当天中午的 `Date`。
+ *
+ * Android 的 Material 3 日期对话框把初始值当作「UTC 日历上的一天」，
+ * 本地中午换算成 UTC 后在部分时区会落到相邻的一天，所以单独给一对 UTC 版本，
+ * 与本地那一对互不混用。
+ */
+export function businessDateToUtcDate(value: string): Date | null {
+  const millis = toUtcNoonMillis(value);
+  return millis === null ? null : new Date(millis);
+}
+
+/** UTC 日历上的 `Date` → 业务日期。Android 对话框确认时回传的是所选那天的 UTC 零点。 */
+export function utcDateToBusinessDate(value: Date): string | null {
+  if (Number.isNaN(value.getTime())) {
+    return null;
+  }
+  return joinBusinessDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
+}
+
+/**
+ * 业务日期的中文展示，例如 `2026-09-23` → `2026年9月23日`。
+ * 纯字符串处理；不是合法日期时原样返回，让调用方至少还能看到原始值。
+ */
+export function formatBusinessDateLabel(value: string): string {
+  const parts = splitBusinessDate(value);
+  if (parts === null) {
+    return value;
+  }
+  return `${parts[0]}年${parts[1]}月${parts[2]}日`;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Chip, ChipRow, TextField } from '@/components/ui';
+import { BusinessDateField, Chip, ChipRow, TextField } from '@/components/ui';
 import { PURCHASE_ITEM_CATEGORY_OPTIONS } from '@/features/purchases/categories';
 import { Colors, Layout, TextStyles } from '@/theme';
 import type { WishlistFormController } from '../hooks/use-wishlist-form';
@@ -55,13 +55,12 @@ export function WishlistForm({ form }: WishlistFormProps) {
         onClear={form.clearInstitution}
       />
 
-      <TextField
+      <BusinessDateField
         label="计划时间"
+        clearable
         value={form.draft.plannedOn}
-        onChangeText={(value) => form.updateField({ plannedOn: value })}
-        placeholder="2026-10-01"
-        hint="按 YYYY-MM-DD 填写，只是自己的打算，不会产生提醒"
-        keyboardType="numbers-and-punctuation"
+        onChange={(value) => form.updateField({ plannedOn: value })}
+        helperText="只是自己的打算，不会产生提醒"
         error={form.errors?.plannedOn}
       />
 

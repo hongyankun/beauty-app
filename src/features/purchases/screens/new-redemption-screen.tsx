@@ -3,7 +3,7 @@ import { usePreventRemove } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 
-import { Button, Card, FormScreen, InlineNotice, TextField } from '@/components/ui';
+import { BusinessDateField, Button, Card, FormScreen, InlineNotice, TextField } from '@/components/ui';
 import type { InstitutionOption } from '@/db';
 import { useDataAccess } from '@/hooks/use-data-access';
 import { Colors, Layout, TextStyles } from '@/theme';
@@ -328,14 +328,13 @@ function RedemptionForm({
       </Card>
 
       <View style={styles.section}>
-        <TextField
+        {/* 不设最早与最晚日期：早于购买日期、晚于有效期都允许，保存前仍按 ADR-017 二次确认。 */}
+        <BusinessDateField
           label="核销日期"
           required
           value={draft.redeemedOn}
-          onChangeText={(value) => updateDraft({ redeemedOn: value })}
-          placeholder="2026-09-16"
-          hint="按 YYYY-MM-DD 填写，默认今天"
-          keyboardType="numbers-and-punctuation"
+          onChange={(value) => updateDraft({ redeemedOn: value })}
+          helperText="默认今天"
           error={errors?.redeemedOn}
         />
 

@@ -1,4 +1,5 @@
 /** Fresh Mint 共享 UI 组件统一出口。不引入第三方 UI 组件库（ADR-011）。 */
+export { BusinessDateField, type BusinessDateFieldProps } from './business-date-field';
 export { Button, type ButtonProps, type ButtonVariant } from './button';
 export { Card, type CardProps } from './card';
 export { Chip, ChipRow, type ChipProps, type ChipRowProps } from './chip';

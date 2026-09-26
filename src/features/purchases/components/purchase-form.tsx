@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Button, Card, TextField } from '@/components/ui';
+import { BusinessDateField, Button, Card, TextField } from '@/components/ui';
 import { Colors, Layout, TextStyles } from '@/theme';
 import { formatMinorAsYuan } from '@/utils/money';
 import type { PurchaseFormController } from '../hooks/use-purchase-form';
@@ -38,14 +38,11 @@ export function PurchaseForm({ form, itemsHint, itemContext }: PurchaseFormProps
           error={errors?.name}
         />
 
-        <TextField
+        <BusinessDateField
           label="购买日期"
           required
           value={draft.purchaseDate}
-          onChangeText={(value) => form.updateField({ purchaseDate: value })}
-          placeholder="2026-09-15"
-          hint="按 YYYY-MM-DD 填写"
-          keyboardType="numbers-and-punctuation"
+          onChange={(value) => form.updateField({ purchaseDate: value })}
           error={errors?.purchaseDate}
         />
 
@@ -78,13 +75,15 @@ export function PurchaseForm({ form, itemsHint, itemContext }: PurchaseFormProps
           error={errors?.totalAmount}
         />
 
-        <TextField
+        {/* 最早日期只是选择器上的提示，「有效期不能早于购买日期」仍由草稿校验与 service 把关；
+            改购买日期不会顺带改有效期。 */}
+        <BusinessDateField
           label="有效期"
+          clearable
           value={draft.expiresOn}
-          onChangeText={(value) => form.updateField({ expiresOn: value })}
-          placeholder="2027-09-15"
-          hint="留空表示未知或长期有效"
-          keyboardType="numbers-and-punctuation"
+          onChange={(value) => form.updateField({ expiresOn: value })}
+          helperText="不填表示未知或长期有效"
+          minimumDate={draft.purchaseDate}
           error={errors?.expiresOn}
         />
 
