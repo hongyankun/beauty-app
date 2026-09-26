@@ -544,7 +544,10 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 
 ### 10.4 映射规则：只用显式映射，不做模糊匹配
 
-- **项目**：旧 `name` 经与机构判重相同的归一化后，**完全等于**项目目录中某一条（同一 `categoryCode` 下）的 `displayName` 或某个别名，且**唯一命中**时，写入 `service_code`；否则 `service_code = NULL`、`custom_name = 旧 name`，成为自定义项目。不做包含、拼音、相似度或跨分类匹配。
+- **项目**：只有标准显示名称或经审核并冻结的 legacyExactNames，在归一化后精确且唯一命中时才允许自动映射；普通 aliases 只用于搜索，不参与迁移。具体为：旧 `name` 经与机构判重相同的归一化后，**完全等于**项目目录中某一条的 `displayName` 或某个 `legacyExactNames`，该比较键在**全目录**只属于这一条、该条目为启用状态、且与旧项目属于**同一 `categoryCode`** 时，写入 `service_code`；否则 `service_code = NULL`、`custom_name = 旧 name`，成为自定义项目。不做包含、拼音、错别字或相似度匹配；增删普通别名不改变任何迁移结果。
+  - 旧项目默认只能在相同一级分类内，通过标准显示名称或经审核的 legacyExactNames 精确且唯一映射。只有冻结在 legacyCrossCategoryMappings 中的明确历史例外，才允许跨一级分类迁移。首版唯一例外是旧中胚层微针分类下的'射频微针'和'黄金微针'，迁移到光电类射频微针。
+  - 匹配顺序固定：先同分类精确匹配 → 落空后查 legacyCrossCategoryMappings（键为「旧分类 + 归一化旧名称」）→ 仍落空则成为自定义项目。白名单条目必须冻结、键唯一、目标启用且与旧分类不同、旧分类不是「其他」，旧名称必须已是目标条目的显示名称或旧名称；白名单只放开分类，不扩大名称，普通别名永远不会借此参与迁移。
+  - 白名单用于旧数据库 migration 和 v1 备份升级转换，但不用于 v2 备份的常规恢复或历史快照重校验。legacyCrossCategoryMappings 只属于这次旧数据迁移与复用同一函数的备份 v1 → v2 转换（第 11.3 节），不用于新建、编辑、搜索与用户重新选择。它与普通迁移索引各有一个稳定摘要，审核时据此确认口径没有被改动。
 - **城市**：只通过一张显式映射表把旧文本映射到行政区代码（例如「深圳」「深圳市」→ 深圳市，「上海」「上海市」→ 上海市）。旧文本经与机构判重相同的归一化后**完全等于**表中某个键、且**唯一命中**时，得到省代码、省名称与市代码；否则代码为 NULL，不猜省份。旧值为空时全部为 NULL。城市文字本身**一律保留原文**，映射只补代码与省名称。同一张表、同一个函数用于三处：
   - `institutions`：命中时写入 `province_code`、`province_name`、`city_code`，`city` 不改写；
   - 由旧核销生成的 `beauty_events`：命中时写入 `province_code_snapshot`、`province_name_snapshot`、`city_code_snapshot`，`city_name_snapshot` = 旧 `city_snapshot` 原文；未命中时只写 `city_name_snapshot`；
@@ -595,6 +598,7 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 3. v2 validator 校验转换结果。
 4. 进入恢复事务。
 
+- 项目映射只在第 2 步发生，与迁移使用同一个纯函数（同分类精确匹配 → 跨分类白名单 → 自定义名称），同一份旧数据两条路径结果一致。v2 文件（含刚由 v1 转换得到的文档）里保存的已经是 `category_code`、`service_code` 与名称快照：v2 恢复只校验并原样写回，**不再**运行名称映射或白名单，也不依赖别名、不因快照与当前目录不一致而拒绝或批量改写名称（第 11.4 节）。
 - 转换**不修改原文件**，不读写任何其他文件，不把备份内容、用户备注、机构名称或文件路径写入日志。
 - 转换或 v2 校验失败时提示「备份内容不完整或存在关联错误。」，数据库一行不变。
 
