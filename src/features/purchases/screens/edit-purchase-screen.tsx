@@ -2,15 +2,20 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert } from 'react-native';
 
-import { Button, EmptyState, FormScreen, InlineNotice, Screen } from '@/components/ui';
+import { EmptyState, FormScreen, InlineNotice, Screen } from '@/components/ui';
 import { useDataAccess } from '@/hooks/use-data-access';
 import { PurchaseCardSkeleton } from '../components/purchase-card-skeleton';
-import { PurchaseForm } from '../components/purchase-form';
+import {
+  PurchaseForm,
+  PurchaseFormFooter,
+  purchaseFormStepLabel,
+} from '../components/purchase-form';
 import type { PurchaseItemEditorContext } from '../components/purchase-item-editor';
 import { usePurchaseEditModel } from '../hooks/use-purchase-edit-model';
 import { usePurchaseForm } from '../hooks/use-purchase-form';
 import {
   createDraftFromEdit,
+  editModelAllocationFacts,
   type PurchaseDraftInput,
   type QuantityFloor,
 } from '../purchase-draft';
@@ -93,6 +98,8 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
   const dataAccess = useDataAccess();
 
   const initialDraft = useMemo(() => createDraftFromEdit(model), [model]);
+  // 编辑前库里的金额结构，用来判断历史差额能否保留；service 在事务内还会按库值再判一次。
+  const initialAllocation = useMemo(() => editModelAllocationFacts(model), [model]);
   /** 用户已确认要从套餐里移除的既有项目 ID。 */
   const [removedItemIds, setRemovedItemIds] = useState<readonly string[]>([]);
 
@@ -105,7 +112,7 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
         model.items.map((item) => [
           item.id,
           {
-            minQuantity: Math.min(item.redeemedCount, item.quantity),
+            minQuantity: item.minQuantity,
             redeemedCount: item.redeemedCount,
           },
         ]),
@@ -119,7 +126,7 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
           item.id,
           {
             redeemedCount: item.redeemedCount,
-            minQuantity: Math.min(item.redeemedCount, item.quantity),
+            minQuantity: item.minQuantity,
             hasRedemptionHistory: item.hasRedemptionHistory,
           },
         ]),
@@ -164,6 +171,7 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
     saveErrorFallback: '没能保存这次修改，请重试。你改动的内容都还在。',
     discard: DISCARD_PROMPT,
     minQuantityByKey,
+    initialAllocation,
   });
 
   const { removeItem } = form;
@@ -230,17 +238,11 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
   return (
     <FormScreen
       title="编辑套餐"
-      subtitle="修改套餐信息与包含的项目。"
+      subtitle={`${purchaseFormStepLabel(form)}：${
+        form.step === 1 ? '修改套餐信息与总价' : '修改项目与金额分配'
+      }`}
       onCancel={form.cancel}
-      footer={
-        <Button
-          label={form.saving ? '正在保存…' : '保存修改'}
-          variant="primary"
-          loading={form.saving}
-          onPress={form.submit}
-          accessibilityLabel="保存修改"
-        />
-      }
+      footer={<PurchaseFormFooter form={form} saveLabel="保存修改" />}
     >
       {form.saveError ? <InlineNotice tone="warning" message={form.saveError} /> : null}
 

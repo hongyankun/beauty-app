@@ -120,7 +120,8 @@ export async function listRedemptionHistory(
       id: row.id,
       purchaseId: row.purchase_id,
       purchaseItemId: row.purchase_item_id,
-      // 项目名称取使用记录上的快照，三份快照依次兜底，按 CHECK 至少有一份非空。
+      // 项目名称取使用记录上的快照：套餐类来源取套餐项目名称快照，外部来源与暂不关联
+      // 取目录或自定义名称快照（由 SQL 按来源选择），按 CHECK 必有值；兜底只防异常数据。
       itemName: row.item_name ?? '未命名项目',
       purchaseName: describePurchase(row.source_kind, row.purchase_name),
       redeemedOn: row.redeemed_on,

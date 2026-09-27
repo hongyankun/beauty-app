@@ -4,13 +4,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import type { InstitutionOption } from '@/db';
-import { ALLOCATION_TOLERANCE_MINOR, formatMinorAsYuan } from '@/utils/money';
 import { createUuid } from '@/utils/uuid';
 import {
-  allocatedTotalMinor,
   createEmptyItemDraft,
+  draftAllocationFacts,
+  hasPurchaseInfoError,
+  inputAllocationFacts,
   isDraftDirty,
+  summarizeDraftAllocation,
   validatePurchaseDraft,
+  validatePurchaseInfo,
+  type DraftAllocation,
   type PurchaseDraft,
   type PurchaseDraftInput,
   type PurchaseFormErrors,
@@ -18,13 +22,21 @@ import {
   type QuantityFloor,
 } from '../purchase-draft';
 import { toUserMessage } from '../services/errors';
+import {
+  allocationSaveRejectedMessage,
+  checkAllocationSave,
+  hasAmountOrStructureChange,
+  summarizeAllocation,
+  type AllocationFacts,
+  type AllocationSummary,
+} from '../services/purchase-allocation';
 import { useInstitutionOptions } from './use-institution-options';
 
 /**
  * 套餐表单的状态与交互，新增页与编辑页共用。
  *
- * 承担三件在两个流程里逐字相同的事：草稿状态与字段处理、提交闸门与错误映射、
- * 未保存内容的返回拦截。留给页面的只有「初值从哪来」「保存调哪个 service」
+ * 承担几件在两个流程里逐字相同的事：草稿状态与字段处理、两步之间的切换、
+ * 金额分配摘要、提交闸门与错误映射、未保存内容的返回拦截。留给页面的只有「初值从哪来」「保存调哪个 service」
  * 「成功后去哪」——这三点才是两者真正的区别（任务书第四节）。
  *
  * 这里不写 SQL，也不 import expo-sqlite：保存动作由页面以回调形式传进来，
@@ -55,17 +67,37 @@ export type UsePurchaseFormOptions = {
   };
   /** 各项目的购买次数下限，以草稿 key 为索引；新增流程不传（见 `validatePurchaseDraft`） */
   readonly minQuantityByKey?: Readonly<Record<string, QuantityFloor>>;
+  /**
+   * 编辑页打开那一刻库里的金额结构；新增流程不传。
+   *
+   * 只用于界面提示与保存前的第一道拦截。真正作数的是 `updatePurchase` 在事务内
+   * 重新读库后的判断，这里传什么都不能让一个不该保存的分配被保存。
+   */
+  readonly initialAllocation?: AllocationFacts;
+};
+
+export type PurchaseFormStep = 1 | 2;
+
+/** 编辑一个原本就不平衡的套餐时的提示状态。 */
+export type HistoricalGapState = {
+  /** 打开页面时库里的分配情况 */
+  readonly original: AllocationSummary;
+  /** 本次是否改了总价、次数、分配金额或项目；改了就必须补平 */
+  readonly structureChanged: boolean;
 };
 
 export type PurchaseFormController = {
+  readonly step: PurchaseFormStep;
   readonly draft: PurchaseDraft;
   readonly errors: PurchaseFormErrors | null;
   /** 顶部提示条的内容；没有待处理的问题时为 null */
   readonly saveError: string | null;
   readonly saving: boolean;
   readonly institutions: readonly InstitutionOption[];
-  /** 项目分摊合计，整数分；有行还没填完时为 null */
-  readonly allocatedMinor: number | null;
+  /** 第二步摘要卡片的数据 */
+  readonly allocation: DraftAllocation;
+  /** 编辑历史不平衡的套餐时才有值 */
+  readonly historicalGap: HistoricalGapState | null;
   readonly updateField: (patch: Partial<PurchaseDraft>) => void;
   readonly changeItem: (key: string, patch: Partial<PurchaseItemDraft>) => void;
   /** 直接把一行从草稿里去掉。是否需要确认由页面决定 */
@@ -74,9 +106,16 @@ export type PurchaseFormController = {
   readonly selectInstitution: (option: InstitutionOption) => void;
   readonly changeInstitutionQuery: (query: string) => void;
   readonly clearInstitution: () => void;
+  /** 校验第一步，通过后进入第二步 */
+  readonly goNext: () => void;
+  /** 回到第一步，草稿原样保留 */
+  readonly goBack: () => void;
   readonly submit: () => void;
   readonly cancel: () => void;
 };
+
+const INFO_INCOMPLETE_MESSAGE = '套餐信息还没有填完整，请检查下方标红的内容。';
+const ITEMS_INCOMPLETE_MESSAGE = '有项目的名称、分类、次数或分配金额需要修改，请检查下方标红的内容。';
 
 export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormController {
   const router = useRouter();
@@ -84,6 +123,7 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
   const institutions = useInstitutionOptions();
 
   const { initialDraft, discard } = options;
+  const [step, setStep] = useState<PurchaseFormStep>(1);
   const [draft, setDraft] = useState<PurchaseDraft>(initialDraft);
   const [errors, setErrors] = useState<PurchaseFormErrors | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -108,6 +148,15 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
     optionsRef.current = options;
   });
 
+  /** 保存是异步的，页面可能在它返回之前就被卸载；卸载后不再更新任何状态。 */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   /**
    * 拦截返回手势、Android 实体返回键与页面栈弹出。
    *
@@ -119,6 +168,9 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
    * 用户点「继续填写」仍会退出。这个 hook 会把「本页不允许被移除」同步给原生栈。
    *
    * 一字未改时不拦截，直接返回（任务书第五节第 8 条）；保存成功后与保存进行中同样不拦。
+   *
+   * 第一步与第二步一视同仁：第二步的系统返回同样是离开整页，有改动就走放弃确认，
+   * 不会被改写成「回到第一步」。回到第一步只有页面上的「返回套餐信息」一个入口。
    */
   const preventRemove = isDraftDirty(draft, initialDraft) && !saved && !saving;
 
@@ -215,49 +267,84 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
 
     try {
       await optionsRef.current.onSave(input);
+      if (!mounted.current) {
+        return;
+      }
       // 先解除返回拦截再导航，且不复位闸门：页面即将离开，
       // 复位只会给第二次点击留出空档。
       setSaved(true);
     } catch (error) {
-      setSaveError(toUserMessage(error, optionsRef.current.saveErrorFallback));
+      const message = toUserMessage(error, optionsRef.current.saveErrorFallback);
       submitting.current = false;
+      if (!mounted.current) {
+        return;
+      }
+      setSaveError(message);
       setSaving(false);
     }
   }, []);
 
+  const goNext = useCallback(() => {
+    if (submitting.current) {
+      return;
+    }
+    const infoErrors = validatePurchaseInfo(draftRef.current);
+    if (hasPurchaseInfoError(infoErrors)) {
+      setErrors({ ...infoErrors, items: {} });
+      setSaveError(INFO_INCOMPLETE_MESSAGE);
+      return;
+    }
+    // 第一步已经没问题了；第二步的项目错误要等用户真正按下保存才出现，
+    // 不在刚进入时就满屏标红。
+    setErrors(null);
+    setSaveError(null);
+    setStep(2);
+  }, []);
+
+  const goBack = useCallback(() => {
+    if (submitting.current) {
+      return;
+    }
+    setSaveError(null);
+    setStep(1);
+  }, []);
+
   const submit = useCallback(() => {
+    if (submitting.current) {
+      return;
+    }
     const current = draftRef.current;
     const result = validatePurchaseDraft(current, {
       minQuantityByKey: optionsRef.current.minQuantityByKey,
     });
     if (!result.ok) {
       setErrors(result.errors);
-      setSaveError('还有几处需要修改，请检查下方标红的内容。');
+      if (hasPurchaseInfoError(result.errors)) {
+        // 第一步的问题在第二步上看不到，把用户带回去。
+        setStep(1);
+        setSaveError(INFO_INCOMPLETE_MESSAGE);
+      } else if (result.errors.itemList !== undefined) {
+        setSaveError(result.errors.itemList);
+      } else {
+        setSaveError(ITEMS_INCOMPLETE_MESSAGE);
+      }
+      return;
+    }
+
+    // 分配合计必须等于总价；编辑历史不平衡的套餐且金额结构未改时例外（PRD 第 5B.6 节）。
+    // App 不替用户补平，也不提供「仍然保存」。
+    const check = checkAllocationSave(
+      optionsRef.current.initialAllocation ?? null,
+      inputAllocationFacts(result.input),
+    );
+    if (!check.ok) {
+      setErrors(null);
+      setSaveError(allocationSaveRejectedMessage(check));
       return;
     }
 
     setErrors(null);
     setSaveError(null);
-
-    // 分摊与总价差额超过 1 元时提示确认，但不禁止保存（PRD-PUR-005、E-11）。
-    const allocated = allocatedTotalMinor(current);
-    const difference =
-      allocated === null ? 0 : Math.abs(allocated - result.input.totalAmountMinor);
-
-    if (difference > ALLOCATION_TOLERANCE_MINOR) {
-      Alert.alert(
-        '总价与项目分摊不一致',
-        `项目分摊合计 ${formatMinorAsYuan(allocated ?? 0)}，套餐总价 ${formatMinorAsYuan(
-          result.input.totalAmountMinor,
-        )}，相差 ${formatMinorAsYuan(difference)}。折扣或赠送会造成这种差额，可以继续保存。`,
-        [
-          { text: '返回修改', style: 'cancel' },
-          { text: '仍然保存', onPress: () => void runSave(result.input) },
-        ],
-      );
-      return;
-    }
-
     void runSave(result.input);
   }, [runSave]);
 
@@ -266,15 +353,37 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
     router.back();
   }, [router]);
 
-  const allocatedMinor = useMemo(() => allocatedTotalMinor(draft), [draft]);
+  const allocation = useMemo(() => summarizeDraftAllocation(draft), [draft]);
+
+  const { initialAllocation } = options;
+  const historicalGap = useMemo<HistoricalGapState | null>(() => {
+    if (initialAllocation === undefined) {
+      return null;
+    }
+    const original = summarizeAllocation(
+      initialAllocation.totalMinor,
+      initialAllocation.items.map((item) => item.allocatedMinor),
+    );
+    if (original.status === 'balanced') {
+      return null;
+    }
+    // 有字段还解析不出来时，它一定和打开时不一样了（打开时每个值都合法）。
+    const facts = draftAllocationFacts(draft);
+    return {
+      original,
+      structureChanged: facts === null || hasAmountOrStructureChange(initialAllocation, facts),
+    };
+  }, [draft, initialAllocation]);
 
   return {
+    step,
     draft,
     errors,
     saveError,
     saving,
     institutions,
-    allocatedMinor,
+    allocation,
+    historicalGap,
     updateField,
     changeItem,
     removeItem,
@@ -282,6 +391,8 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
     selectInstitution,
     changeInstitutionQuery,
     clearInstitution,
+    goNext,
+    goBack,
     submit,
     cancel,
   };

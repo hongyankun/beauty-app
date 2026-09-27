@@ -24,7 +24,7 @@ export function useInstitutionOptions(): readonly InstitutionOption[] {
         }
       } catch (error) {
         if (__DEV__) {
-          console.error('[purchases] 读取机构列表失败', error);
+          console.error('[purchases] 读取机构列表失败', error instanceof Error ? error.name : typeof error);
         }
       }
     })();

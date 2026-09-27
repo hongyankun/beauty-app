@@ -27,7 +27,8 @@ export function toUserMessage(error: unknown, fallback: string): string {
     return error.message;
   }
   if (__DEV__) {
-    console.error('[purchases] 未预期的失败', error);
+    // 只记错误类别：原始异常里可能带着 SQL、套餐名、机构名或金额，不进日志。
+    console.error('[purchases] 未预期的失败', error instanceof Error ? error.name : typeof error);
   }
   return fallback;
 }

@@ -24,6 +24,8 @@ import type {
  * 原套餐已删除的记录同样要出现在历史里（ADR-021）。
  *
  * 项目与套餐名称取使用记录上的快照，套餐 ID 通过 LEFT JOIN 当前项目取得：
+ * 来源为套餐、单次购买或原套餐已删除时取套餐项目名称快照；外部来源与暂不关联
+ * 取目录名称快照或自定义名称快照（DATA_MODEL_V4 第 7 节）。一律不读项目当前名称。
  * 来源不是套餐时项目为空，界面据此不提供跳转。机构与城市取变美记录自己的快照，
  * 套餐后来改机构不改写它（PRD-INST-005、PRD-PUR-018）。
  */
@@ -31,7 +33,10 @@ const HISTORY_SELECT = `SELECT
     u.id,
     u.source_kind,
     u.purchase_item_id,
-    COALESCE(u.purchase_item_name_snapshot, u.service_name_snapshot, u.custom_name_snapshot) AS item_name,
+    CASE WHEN u.source_kind IN ('package_item', 'single_purchase', 'deleted_package')
+         THEN u.purchase_item_name_snapshot
+         ELSE COALESCE(u.service_name_snapshot, u.custom_name_snapshot)
+    END AS item_name,
     i.purchase_id AS purchase_id,
     u.purchase_name_snapshot AS purchase_name,
     e.occurred_on AS redeemed_on,
@@ -86,12 +91,15 @@ export function createRedemptionRepository(db: SQLiteDatabase): RedemptionReposi
 
     async listByPurchase(purchaseId) {
       // 已撤销的记录同样返回：它们要在历史里继续可见并标注（ADR-016），
-      // 只是不参与余次计算。项目名称取项目**当前**的名称，与 v3 口径一致。
+      // 只是不参与余次计算。项目名称取使用记录上的快照，不取项目当前的名称：
+      // 项目后来改名，历史仍显示当时的名称（DATA_MODEL_V4 第 5 节）。
+      // JOIN 当前项目只用来按套餐筛选；这里的来源必然是套餐或单次购买，
+      // CHECK 保证其快照非空。
       return db.getAllAsync<RedemptionHistoryRow>(
         `SELECT
             u.id,
             u.purchase_item_id,
-            i.name AS item_name,
+            u.purchase_item_name_snapshot AS item_name,
             e.occurred_on AS redeemed_on,
             e.institution_name_snapshot,
             e.city_name_snapshot AS city_snapshot,

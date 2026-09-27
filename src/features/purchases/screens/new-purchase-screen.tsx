@@ -1,11 +1,15 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo } from 'react';
 
-import { Button, FormScreen, InlineNotice } from '@/components/ui';
+import { FormScreen, InlineNotice } from '@/components/ui';
 import { useDataAccess } from '@/hooks/use-data-access';
 import { todayBusinessDate } from '@/utils/business-date';
 import { createUuid } from '@/utils/uuid';
-import { PurchaseForm } from '../components/purchase-form';
+import {
+  PurchaseForm,
+  PurchaseFormFooter,
+  purchaseFormStepLabel,
+} from '../components/purchase-form';
 import { usePurchaseForm } from '../hooks/use-purchase-form';
 import { createInitialDraft, type PurchaseDraftInput } from '../purchase-draft';
 import { createPurchase } from '../services/create-purchase';
@@ -62,17 +66,11 @@ export function NewPurchaseScreen() {
   return (
     <FormScreen
       title="新增购买记录"
-      subtitle="记录一次购买，以及它包含的项目。"
+      subtitle={`${purchaseFormStepLabel(form)}：${
+        form.step === 1 ? '填写套餐信息与总价' : '添加项目并分配金额'
+      }`}
       onCancel={form.cancel}
-      footer={
-        <Button
-          label={form.saving ? '正在保存…' : '保存套餐'}
-          variant="primary"
-          loading={form.saving}
-          onPress={form.submit}
-          accessibilityLabel="保存套餐"
-        />
-      }
+      footer={<PurchaseFormFooter form={form} saveLabel="保存套餐" />}
     >
       {form.saveError ? <InlineNotice tone="warning" message={form.saveError} /> : null}
 

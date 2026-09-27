@@ -43,15 +43,16 @@ export function createDashboardRepository(db: SQLiteDatabase): DashboardReposito
       // 排序与套餐详情里的使用历史一致：事件日期倒序，同一天按创建时间倒序，
       // 让「刚刚记录的那一条」稳定排在同日的最前面。
       //
-      // 只取仍关联套餐项目的有效记录：卡片要能点进套餐详情。两次 JOIN 取出项目与套餐的
-      // 当前名称，并以 `purchases.profile_id` 校验档案归属。
+      // 只取仍关联套餐项目的有效记录：卡片要能点进套餐详情。两次 JOIN 只用来取套餐 ID
+      // 并以 `purchases.profile_id` 校验档案归属；项目与套餐名称取使用记录上的快照，
+      // 不取当前名称：改名后历史仍显示当时的名称（DATA_MODEL_V4 第 5 节）。
       return db.getAllAsync<RecentRedemptionRow>(
         `SELECT
             u.id,
             u.purchase_item_id,
-            i.name   AS item_name,
-            p.id     AS purchase_id,
-            p.name   AS purchase_name,
+            u.purchase_item_name_snapshot AS item_name,
+            p.id                          AS purchase_id,
+            u.purchase_name_snapshot      AS purchase_name,
             e.occurred_on AS redeemed_on,
             e.institution_name_snapshot,
             e.city_name_snapshot AS city_snapshot

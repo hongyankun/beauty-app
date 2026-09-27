@@ -2,12 +2,15 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Card, Chip, ChipRow, Icon, TextField } from '@/components/ui';
 import { Colors, Layout, Spacing, TextStyles } from '@/theme';
+import { parseYuanToMinor } from '@/utils/money';
+import { parseQuantity } from '@/utils/quantity';
 import { PURCHASE_ITEM_CATEGORY_OPTIONS } from '../categories';
 import {
   quantityFloorMessage,
   type PurchaseItemDraft,
   type PurchaseItemErrors,
 } from '../purchase-draft';
+import { formatAveragePerUse } from '../services/purchase-allocation';
 
 /** 编辑既有项目时的附加事实。新增流程不传。 */
 export type PurchaseItemEditorContext = {
@@ -41,6 +44,9 @@ export type PurchaseItemEditorProps = {
  * 有 `context` 时会在购买次数上方陈述已核销次数（IA 第 3.6.2 节：编辑态展示
  * 每个项目的已核销次数）。这里只陈述事实，不代替校验——能不能保存由
  * `validatePurchaseDraft` 与保存事务判定。
+ *
+ * 金额录入的是**分配到这个项目的总金额**（PRD 第 5B.6 节）。次数与金额都能解析时，
+ * 下方陈述派生的单次均价，除不尽时标「约」；它只是展示，不写回任何地方。
  */
 export function PurchaseItemEditor({
   item,
@@ -57,6 +63,13 @@ export function PurchaseItemEditor({
       : context.redeemedCount === 0
         ? '还没有核销过'
         : quantityFloorMessage(context);
+
+  const quantity = parseQuantity(item.quantity);
+  const amount = parseYuanToMinor(item.allocatedAmount);
+  const averageText =
+    quantity.ok && amount.ok
+      ? `单次均价 ${formatAveragePerUse(amount.minor, quantity.quantity)}`
+      : null;
 
   return (
     <Card style={styles.card}>
@@ -117,16 +130,19 @@ export function PurchaseItemEditor({
         error={errors?.quantity}
       />
 
-      <TextField
-        label="单次金额"
-        required
-        value={item.unitAmount}
-        onChangeText={(value) => onChange(item.key, { unitAmount: value })}
-        placeholder="0.00"
-        keyboardType="decimal-pad"
-        hint="单位为元。赠送项目填 0"
-        error={errors?.unitAmount}
-      />
+      <View style={styles.amountGroup}>
+        <TextField
+          label="项目分配金额"
+          required
+          value={item.allocatedAmount}
+          onChangeText={(value) => onChange(item.key, { allocatedAmount: value })}
+          placeholder="0.00"
+          keyboardType="decimal-pad"
+          hint="单位为元，填写这个项目分到的总金额。赠送项目填 0"
+          error={errors?.allocatedAmount}
+        />
+        {averageText === null ? null : <Text style={styles.average}>{averageText}</Text>}
+      </View>
 
       <TextField
         label="项目备注"
@@ -182,5 +198,12 @@ const styles = StyleSheet.create({
   error: {
     ...TextStyles.caption,
     color: Colors.coral,
+  },
+  amountGroup: {
+    gap: Layout.labelGap,
+  },
+  average: {
+    ...TextStyles.caption,
+    color: Colors.textSecondary,
   },
 });

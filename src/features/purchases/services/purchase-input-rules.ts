@@ -30,8 +30,8 @@ export type PurchaseItemFields = {
   readonly category: PurchaseItemCategory;
   /** 购买次数，正整数 */
   readonly quantity: number;
-  /** 分摊单价，整数分，允许为 0（0 表示赠送项目，PRD 第 6.2 节） */
-  readonly unitAmountMinor: number;
+  /** 分配到这个项目的总金额，整数分，允许为 0（赠送项目，PRD 第 5B.6 节）；单次均价只是派生展示值 */
+  readonly allocatedAmountMinor: number;
   readonly notes: string | null;
 };
 
@@ -69,10 +69,10 @@ export function assertPurchaseItemIsValid(item: PurchaseItemFields): void {
   assertValid(PURCHASE_ITEM_CATEGORIES.includes(item.category), '请选择一个有效的项目分类');
   assertValid(Number.isInteger(item.quantity) && item.quantity > 0, '购买次数必须是大于 0 的整数');
   assertValid(
-    Number.isSafeInteger(item.unitAmountMinor) &&
-      item.unitAmountMinor >= 0 &&
-      item.unitAmountMinor <= MAX_AMOUNT_MINOR,
-    '单次金额不在可保存的范围内',
+    Number.isSafeInteger(item.allocatedAmountMinor) &&
+      item.allocatedAmountMinor >= 0 &&
+      item.allocatedAmountMinor <= MAX_AMOUNT_MINOR,
+    '项目分配金额不在可保存的范围内',
   );
 }
 

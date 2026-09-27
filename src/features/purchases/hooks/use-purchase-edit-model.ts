@@ -51,7 +51,7 @@ export function usePurchaseEditModel(purchaseId: string): PurchaseEditModelState
         }
         if (__DEV__) {
           // 仅开发期输出。界面上不展示 SQL 与堆栈（PRD 第 17.6 节）。
-          console.error('[purchases] 读取套餐编辑初值失败', error);
+          console.error('[purchases] 读取套餐编辑初值失败', error instanceof Error ? error.name : typeof error);
         }
         setStatus('error');
       }

@@ -16,7 +16,12 @@ import {
   normalizeCity,
   type PurchaseItemFields,
 } from './purchase-input-rules';
-import { resolveAllocatedAmount, resolveItemIdentity } from './purchase-item-columns';
+import { resolveItemIdentity } from './purchase-item-columns';
+import {
+  allocationSaveRejectedMessage,
+  checkAllocationSave,
+  type AllocationFacts,
+} from './purchase-allocation';
 
 /**
  * 编辑套餐用例。
@@ -33,6 +38,10 @@ import { resolveAllocatedAmount, resolveItemIdentity } from './purchase-item-col
  * 历史核销的机构与城市快照记录的是「那一次核销发生时的事实」，不随之变动
  * （PRD 第 5A.2 节、PRD-INST-005）。改项目名称同样不改写使用记录上的名称快照
  * （PRD 第 5B.5 节）。
+ *
+ * 金额分配同样在这里做最终裁决：原本平衡的套餐保存后必须仍然平衡；原本不平衡的套餐
+ * 只有在总价、项目集合、各项目次数与分配金额都没变时才能保留原差额（PRD 第 5B.6 节）。
+ * 「变没变」只拿事务内读到的库值比较，不信任客户端传来的任何标记。
  *
  * 购买人与购买类型不在可写范围内：本轮没有购买人选择器（BT-0020 之后才有），
  * 保存时原样保留库里的值。
@@ -158,6 +167,53 @@ function assertChangesAreSafe(
   assertHasAtLeastOneItem(input.items.length + untouched.length);
 }
 
+/**
+ * 事务内的金额分配校验。
+ *
+ * `stored` 是事务内读到的套餐总价与项目；`next` 是保存后套餐里会有的全部项目，
+ * 包括表单没带上、也没要求删除的既有项目（它们的次数与金额原样保留）。
+ */
+function assertAllocationIsSavable(
+  input: UpdatePurchaseInput,
+  storedTotalMinor: number,
+  existing: ReadonlyMap<string, PurchaseItemEditRow>,
+): void {
+  const rows = [...existing.values()];
+  const stored: AllocationFacts = {
+    totalMinor: storedTotalMinor,
+    items: rows.map((row) => ({
+      id: row.id,
+      quantity: row.quantity,
+      allocatedMinor: row.allocated_amount_minor,
+    })),
+  };
+  const untouched = rows.filter(
+    (row) =>
+      !input.removedItemIds.includes(row.id) &&
+      !input.items.some((item) => item.purchaseItemId === row.id),
+  );
+  const next: AllocationFacts = {
+    totalMinor: input.totalAmountMinor,
+    items: [
+      ...input.items.map((item) => ({
+        id: item.purchaseItemId,
+        quantity: item.quantity,
+        allocatedMinor: item.allocatedAmountMinor,
+      })),
+      ...untouched.map((row) => ({
+        id: row.id,
+        quantity: row.quantity,
+        allocatedMinor: row.allocated_amount_minor,
+      })),
+    ],
+  };
+
+  const check = checkAllocationSave(stored, next);
+  if (!check.ok) {
+    throw new PurchaseServiceError(allocationSaveRejectedMessage(check));
+  }
+}
+
 /** 按输入写库。调用方保证已经在事务内，并且校验全部通过。 */
 async function applyChanges(
   repositories: RepositoryBundle,
@@ -193,14 +249,14 @@ async function applyChanges(
     const stored = existing.get(item.purchaseItemId) ?? null;
     // 走 UPDATE 保留原 ID。全删再插会让这个项目的核销记录指向一个不存在的项目，
     // 等于把用户的核销历史一次性作废（任务书第三节）。
-    // 没改动的分配金额与目录代码原样保留，规则见 purchase-item-columns。
+    // 分类没改时库里的分类代码原样保留，规则见 purchase-item-columns。
     const changed = await repositories.purchases.updateItem({
       id: item.purchaseItemId,
       purchase_id: input.purchaseId,
       name: item.name.trim(),
       ...resolveItemIdentity(stored, item),
       quantity: item.quantity,
-      allocated_amount_minor: resolveAllocatedAmount(stored, item),
+      allocated_amount_minor: item.allocatedAmountMinor,
       notes: item.notes,
       updated_at: now,
     });
@@ -217,7 +273,7 @@ async function applyChanges(
       name: item.name.trim(),
       ...resolveItemIdentity(null, item),
       quantity: item.quantity,
-      allocated_amount_minor: resolveAllocatedAmount(null, item),
+      allocated_amount_minor: item.allocatedAmountMinor,
       notes: item.notes,
       created_at: now,
       updated_at: now,
@@ -267,6 +323,7 @@ export async function updatePurchase(
 
     // 3. 判断。任何一条不成立都抛出，事务尚未写入任何内容。
     assertChangesAreSafe(input, existing);
+    assertAllocationIsSavable(input, purchase.total_amount_minor, existing);
 
     // 4. 机构：选已有的会在事务内重新确认存在，新建的按判重键复用，
     //    规则与新增套餐完全一致（ADR-014）。

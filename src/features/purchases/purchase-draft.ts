@@ -3,6 +3,11 @@ import { compareBusinessDates, parseBusinessDate } from '@/utils/business-date';
 import { cleanInstitutionName } from '@/utils/institution-name';
 import { formatMinorForInput, parseYuanToMinor } from '@/utils/money';
 import { parseQuantity } from '@/utils/quantity';
+import {
+  summarizeAllocation,
+  type AllocationFacts,
+  type AllocationSummary,
+} from './services/purchase-allocation';
 import type {
   CreatePurchaseInput,
   CreatePurchaseItemInput,
@@ -32,7 +37,8 @@ export type PurchaseItemDraft = {
   readonly name: string;
   readonly category: PurchaseItemCategory | null;
   readonly quantity: string;
-  readonly unitAmount: string;
+  /** 分配到这个项目的总金额，元，原样保存用户输入的文本 */
+  readonly allocatedAmount: string;
   readonly notes: string;
 };
 
@@ -53,15 +59,21 @@ export type PurchaseItemErrors = {
   readonly name?: string;
   readonly category?: string;
   readonly quantity?: string;
-  readonly unitAmount?: string;
+  readonly allocatedAmount?: string;
 };
 
-export type PurchaseFormErrors = {
+/** 第一步（套餐信息）的字段错误。 */
+export type PurchaseInfoErrors = {
   readonly name?: string;
   readonly institution?: string;
   readonly purchaseDate?: string;
   readonly totalAmount?: string;
   readonly expiresOn?: string;
+};
+
+export type PurchaseFormErrors = PurchaseInfoErrors & {
+  /** 项目列表整体的问题，例如一个项目都没有 */
+  readonly itemList?: string;
   /** 以项目草稿的 `key` 为索引 */
   readonly items: Readonly<Record<string, PurchaseItemErrors>>;
 };
@@ -120,7 +132,7 @@ export function createEmptyItemDraft(key: string): PurchaseItemDraft {
     name: '',
     category: null,
     quantity: '',
-    unitAmount: '',
+    allocatedAmount: '',
     notes: '',
   };
 }
@@ -170,7 +182,7 @@ export function createDraftFromEdit(model: PurchaseEditModel): PurchaseDraft {
       name: item.name,
       category: item.category,
       quantity: String(item.quantity),
-      unitAmount: formatMinorForInput(item.unitAmountMinor),
+      allocatedAmount: formatMinorForInput(item.allocatedAmountMinor),
       notes: item.notes ?? '',
     })),
   };
@@ -221,17 +233,15 @@ function hasAnyError(errors: PurchaseFormErrors): boolean {
   return Object.values(items).some((itemErrors) => Object.keys(itemErrors).length > 0);
 }
 
-/**
- * 校验整份草稿。
- *
- * 一次性收集**全部**字段的错误再返回，不在第一个错误处短路：
- * 用户应该一次看到所有需要修改的地方，而不是改一个冒一个。
- */
-export function validatePurchaseDraft(
-  draft: PurchaseDraft,
-  options: PurchaseDraftValidationOptions = {},
-): PurchaseDraftValidation {
-  const itemErrors: Record<string, PurchaseItemErrors> = {};
+type ParsedPurchaseInfo = {
+  readonly errors: PurchaseInfoErrors;
+  readonly selection: InstitutionSelection;
+  readonly purchaseDate: ReturnType<typeof parseBusinessDate>;
+  readonly totalAmount: ReturnType<typeof parseYuanToMinor>;
+  readonly expiresOn: string | null;
+};
+
+function parsePurchaseInfo(draft: PurchaseDraft): ParsedPurchaseInfo {
   let nameError: string | undefined;
   let institutionError: string | undefined;
   let purchaseDateError: string | undefined;
@@ -273,13 +283,65 @@ export function validatePurchaseDraft(
     }
   }
 
+  return {
+    errors: {
+      name: nameError,
+      institution: institutionError,
+      purchaseDate: purchaseDateError,
+      totalAmount: totalAmountError,
+      expiresOn: expiresOnError,
+    },
+    selection,
+    purchaseDate,
+    totalAmount,
+    expiresOn,
+  };
+}
+
+/** 第一步的字段错误是否存在。 */
+export function hasPurchaseInfoError(errors: PurchaseInfoErrors): boolean {
+  return (
+    errors.name !== undefined ||
+    errors.institution !== undefined ||
+    errors.purchaseDate !== undefined ||
+    errors.totalAmount !== undefined ||
+    errors.expiresOn !== undefined
+  );
+}
+
+/**
+ * 只校验第一步的套餐信息。
+ *
+ * 「下一步」用它把用户挡在第一步：总价都填不对，第二步的分配摘要也就无从算起。
+ */
+export function validatePurchaseInfo(draft: PurchaseDraft): PurchaseInfoErrors {
+  return parsePurchaseInfo(draft).errors;
+}
+
+/**
+ * 校验整份草稿。
+ *
+ * 一次性收集**全部**字段的错误再返回，不在第一个错误处短路：
+ * 用户应该一次看到所有需要修改的地方，而不是改一个冒一个。
+ *
+ * 这里只校验每个字段自身；分配合计是否等于总价由 `checkAllocationSave` 判断，
+ * 因为编辑一个历史不平衡的套餐时，这条规则取决于金额结构有没有被改过。
+ */
+export function validatePurchaseDraft(
+  draft: PurchaseDraft,
+  options: PurchaseDraftValidationOptions = {},
+): PurchaseDraftValidation {
+  const itemErrors: Record<string, PurchaseItemErrors> = {};
+  const { errors: infoErrors, selection, purchaseDate, totalAmount, expiresOn } =
+    parsePurchaseInfo(draft);
+
   const items: PurchaseDraftItemInput[] = [];
   for (const item of draft.items) {
     const errors: {
       name?: string;
       category?: string;
       quantity?: string;
-      unitAmount?: string;
+      allocatedAmount?: string;
     } = {};
 
     if (item.name.trim() === '') {
@@ -301,35 +363,34 @@ export function validatePurchaseDraft(
       }
     }
 
-    // 单次金额必填，允许填 0 表示赠送项目（PRD 第 6.2 节、PRD-PUR-011）。
-    const unitAmount = parseYuanToMinor(item.unitAmount);
-    if (!unitAmount.ok) {
-      errors.unitAmount =
-        unitAmount.reason === 'empty' ? '请填写单次金额，赠送项目填 0' : AMOUNT_MESSAGES[unitAmount.reason];
+    // 分配金额必填，允许填 0 表示赠送项目（PRD 第 5B.6 节）。
+    const allocatedAmount = parseYuanToMinor(item.allocatedAmount);
+    if (!allocatedAmount.ok) {
+      errors.allocatedAmount =
+        allocatedAmount.reason === 'empty'
+          ? '请填写项目分配金额，赠送项目填 0'
+          : AMOUNT_MESSAGES[allocatedAmount.reason];
     }
 
     if (Object.keys(errors).length > 0) {
       itemErrors[item.key] = errors;
       continue;
     }
-    if (item.category !== null && quantity.ok && unitAmount.ok) {
+    if (item.category !== null && quantity.ok && allocatedAmount.ok) {
       items.push({
         purchaseItemId: item.purchaseItemId,
         name: item.name.trim(),
         category: item.category,
         quantity: quantity.quantity,
-        unitAmountMinor: unitAmount.minor,
+        allocatedAmountMinor: allocatedAmount.minor,
         notes: optionalText(item.notes),
       });
     }
   }
 
   const errors: PurchaseFormErrors = {
-    name: nameError,
-    institution: institutionError,
-    purchaseDate: purchaseDateError,
-    totalAmount: totalAmountError,
-    expiresOn: expiresOnError,
+    ...infoErrors,
+    itemList: draft.items.length === 0 ? '至少添加一个项目' : undefined,
     items: itemErrors,
   };
 
@@ -352,23 +413,82 @@ export function validatePurchaseDraft(
   };
 }
 
+/** 第二步摘要卡片的数据。 */
+export type DraftAllocation = {
+  /** 总价还不能解析时为 null，此时没有可信的摘要可展示 */
+  readonly summary: AllocationSummary | null;
+  /** 分配金额还没填或填得不合法的项目数；它们暂按 0 计入已分配 */
+  readonly incompleteCount: number;
+};
+
 /**
- * 项目分摊总额 = Σ(单次金额 × 购买次数)，整数分。
+ * 按当前草稿实时汇总分配情况，整数分。
  *
- * 只累加当前能解析出合法数值的行；有行还没填完时返回 null，
- * 避免用半份数据算出一个会误导人的差额。
+ * 还没填好的行按 0 计入，同时单独报告有几行没填好：摘要要一边输入一边更新，
+ * 不能等所有行都合法才出现；但也不能让用户误以为那几行已经分配完了。
  */
-export function allocatedTotalMinor(draft: PurchaseDraft): number | null {
-  let total = 0;
+export function summarizeDraftAllocation(draft: PurchaseDraft): DraftAllocation {
+  let incompleteCount = 0;
+  const amounts: number[] = [];
+  for (const item of draft.items) {
+    const amount = parseYuanToMinor(item.allocatedAmount);
+    if (amount.ok) {
+      amounts.push(amount.minor);
+    } else {
+      incompleteCount += 1;
+    }
+  }
+  const total = parseYuanToMinor(draft.totalAmount);
+  return {
+    summary: total.ok ? summarizeAllocation(total.minor, amounts) : null,
+    incompleteCount,
+  };
+}
+
+/** 草稿里的金额结构；总价、任一行次数或分配金额还不能解析时为 null。 */
+export function draftAllocationFacts(draft: PurchaseDraft): AllocationFacts | null {
+  const total = parseYuanToMinor(draft.totalAmount);
+  if (!total.ok) {
+    return null;
+  }
+  const items: { id: string | null; quantity: number; allocatedMinor: number }[] = [];
   for (const item of draft.items) {
     const quantity = parseQuantity(item.quantity);
-    const unitAmount = parseYuanToMinor(item.unitAmount);
-    if (!quantity.ok || !unitAmount.ok) {
+    const amount = parseYuanToMinor(item.allocatedAmount);
+    if (!quantity.ok || !amount.ok) {
       return null;
     }
-    total += unitAmount.minor * quantity.quantity;
+    items.push({
+      id: item.purchaseItemId,
+      quantity: quantity.quantity,
+      allocatedMinor: amount.minor,
+    });
   }
-  return total;
+  return { totalMinor: total.minor, items };
+}
+
+/** 校验通过后的输入里的金额结构，与 service 比较的是同一组事实。 */
+export function inputAllocationFacts(input: PurchaseDraftInput): AllocationFacts {
+  return {
+    totalMinor: input.totalAmountMinor,
+    items: input.items.map((item) => ({
+      id: item.purchaseItemId,
+      quantity: item.quantity,
+      allocatedMinor: item.allocatedAmountMinor,
+    })),
+  };
+}
+
+/** 编辑页打开那一刻库里的金额结构，是界面判断「金额结构有没有改」的基准。 */
+export function editModelAllocationFacts(model: PurchaseEditModel): AllocationFacts {
+  return {
+    totalMinor: model.totalAmountMinor,
+    items: model.items.map((item) => ({
+      id: item.id,
+      quantity: item.quantity,
+      allocatedMinor: item.allocatedAmountMinor,
+    })),
+  };
 }
 
 function isSameItem(item: PurchaseItemDraft, initial: PurchaseItemDraft): boolean {
@@ -377,7 +497,7 @@ function isSameItem(item: PurchaseItemDraft, initial: PurchaseItemDraft): boolea
     item.name === initial.name &&
     item.category === initial.category &&
     item.quantity === initial.quantity &&
-    item.unitAmount === initial.unitAmount &&
+    item.allocatedAmount === initial.allocatedAmount &&
     item.notes === initial.notes
   );
 }
@@ -391,6 +511,11 @@ function isSameItem(item: PurchaseItemDraft, initial: PurchaseItemDraft): boolea
  * （任务书第五节第 8 条）。
  *
  * 只比较用户能改的内容，不比较 `key`：新增一行再删掉，草稿应当算回未修改。
+ * 当前在第几步不属于草稿，来回切换步骤不算改动。
+ *
+ * 金额按输入框里的原文比较，不按解析后的分比较：把「900.00」改成「900」算一次改动。
+ * 这是有意的——放弃确认宁可多问一次，也不能在用户确实动过输入框时静默丢掉；
+ * 金额结构是否改动（决定历史差额能否保留）另由 `hasAmountOrStructureChange` 按整数分判断。
  */
 export function isDraftDirty(draft: PurchaseDraft, initial: PurchaseDraft): boolean {
   if (

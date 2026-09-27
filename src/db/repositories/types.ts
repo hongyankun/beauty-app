@@ -436,7 +436,9 @@ export type PurchaseItemContextRow = {
  *
  * schema v4 起核销记录退役，这里读的是 `usage_records` JOIN `beauty_events`：
  * 日期、机构与城市来自变美记录的快照，状态与撤销信息来自使用记录本身。
- * `item_name` 是项目**当前**的名称，与 v3 口径相同。
+ * `item_name` 是使用记录上的套餐项目名称快照（记录当时的名称），不是项目当前的名称：
+ * 项目改名不改变历史的显示（DATA_MODEL_V4 第 5 节）。这里只返回仍关联项目的记录，
+ * 来源必然是套餐或单次购买，表级 CHECK 保证快照非空。
  */
 export type RedemptionHistoryRow = {
   readonly id: string;
@@ -579,6 +581,9 @@ export type DashboardTotalsRow = {
  *
  * 只返回展示与跳转需要的列：已撤销的记录不会出现在这里，
  * 所以不带 `status`、`voided_at`，避免上层误以为还要自己过滤。
+ *
+ * `item_name` 与 `purchase_name` 是使用记录上的名称快照，不是项目与套餐当前的名称；
+ * 来源必然是套餐或单次购买，表级 CHECK 保证两份快照非空。
  */
 export type RecentRedemptionRow = {
   readonly id: string;

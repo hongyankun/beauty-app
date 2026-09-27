@@ -1,11 +1,8 @@
-import { StyleSheet, Text, View } from 'react-native';
-
-import { BusinessDateField, Button, Card, TextField } from '@/components/ui';
-import { Colors, Layout, TextStyles } from '@/theme';
-import { formatMinorAsYuan } from '@/utils/money';
+import { Button } from '@/components/ui';
 import type { PurchaseFormController } from '../hooks/use-purchase-form';
-import { InstitutionPicker } from './institution-picker';
-import { PurchaseItemEditor, type PurchaseItemEditorContext } from './purchase-item-editor';
+import { PurchaseInfoStep } from './purchase-info-step';
+import type { PurchaseItemEditorContext } from './purchase-item-editor';
+import { PurchaseItemsStep } from './purchase-items-step';
 
 export type PurchaseFormProps = {
   /** `usePurchaseForm` 的返回值，状态与处理函数都从这里来 */
@@ -17,144 +14,53 @@ export type PurchaseFormProps = {
 };
 
 /**
- * 套餐表单的字段区，新增页与编辑页共用同一份。
+ * 套餐表单的步骤编排，新增页与编辑页共用同一份（PRD 第 5B.6 节）。
  *
- * 只负责渲染：字段顺序、标签、提示语、分摊合计卡片都在这里定稿，两边一致。
- * 页面各自持有 `FormScreen`（标题、取消、底部主按钮）与导航，
- * 因为那三样正是两个流程真正不同的地方。
+ * 第一步是套餐信息与总价，第二步是项目与金额分配。两步共用同一份草稿，
+ * 切换步骤只换渲染的那一半，不清空也不重建任何字段。
+ *
+ * 这里不含任何保存逻辑：校验、提交闸门与返回拦截都在 `usePurchaseForm`，
+ * 写库在 service。页面各自持有 `FormScreen` 与导航。
  */
 export function PurchaseForm({ form, itemsHint, itemContext }: PurchaseFormProps) {
-  const { draft, errors } = form;
+  if (form.step === 1) {
+    return <PurchaseInfoStep form={form} />;
+  }
+  return <PurchaseItemsStep form={form} itemsHint={itemsHint} itemContext={itemContext} />;
+}
+
+/** 当前是第几步，放在页面副标题里。 */
+export function purchaseFormStepLabel(form: PurchaseFormController): string {
+  return `第 ${form.step} 步，共 2 步`;
+}
+
+export type PurchaseFormFooterProps = {
+  form: PurchaseFormController;
+  /** 第二步主按钮的文案：新增为「保存套餐」，编辑为「保存修改」 */
+  saveLabel: string;
+};
+
+/**
+ * 底部操作区。每一步只有一个实心主按钮（docs/UI_REFERENCE.md）：
+ * 第一步是「下一步：添加项目」，第二步是保存；「返回套餐信息」是次按钮。
+ *
+ * 保存进行中两个按钮都禁用：回到第一步再改字段，会让正在写入的内容与屏幕上的不一致。
+ */
+export function PurchaseFormFooter({ form, saveLabel }: PurchaseFormFooterProps) {
+  if (form.step === 1) {
+    return <Button label="下一步：添加项目" variant="primary" onPress={form.goNext} />;
+  }
 
   return (
     <>
-      <View style={styles.section}>
-        <TextField
-          label="套餐名称"
-          required
-          value={draft.name}
-          onChangeText={(value) => form.updateField({ name: value })}
-          placeholder="例如 秋季紧致套餐"
-          error={errors?.name}
-        />
-
-        <BusinessDateField
-          label="购买日期"
-          required
-          value={draft.purchaseDate}
-          onChange={(value) => form.updateField({ purchaseDate: value })}
-          error={errors?.purchaseDate}
-        />
-
-        <InstitutionPicker
-          options={form.institutions}
-          mode={draft.institutionMode}
-          institutionId={draft.institutionId}
-          query={draft.institutionQuery}
-          error={errors?.institution}
-          onQueryChange={form.changeInstitutionQuery}
-          onSelectExisting={form.selectInstitution}
-          onClear={form.clearInstitution}
-        />
-
-        <TextField
-          label="城市"
-          value={draft.city}
-          onChangeText={(value) => form.updateField({ city: value })}
-          placeholder="例如 上海"
-        />
-
-        <TextField
-          label="套餐总价"
-          required
-          value={draft.totalAmount}
-          onChangeText={(value) => form.updateField({ totalAmount: value })}
-          placeholder="0.00"
-          keyboardType="decimal-pad"
-          hint="单位为元"
-          error={errors?.totalAmount}
-        />
-
-        {/* 最早日期只是选择器上的提示，「有效期不能早于购买日期」仍由草稿校验与 service 把关；
-            改购买日期不会顺带改有效期。 */}
-        <BusinessDateField
-          label="有效期"
-          clearable
-          value={draft.expiresOn}
-          onChange={(value) => form.updateField({ expiresOn: value })}
-          helperText="不填表示未知或长期有效"
-          minimumDate={draft.purchaseDate}
-          error={errors?.expiresOn}
-        />
-
-        <TextField
-          label="备注"
-          value={draft.notes}
-          onChangeText={(value) => form.updateField({ notes: value })}
-          placeholder="例如 与朋友一起购买的双人套餐"
-          multiline
-        />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>套餐包含的项目</Text>
-        <Text style={styles.sectionHint}>{itemsHint}</Text>
-
-        {draft.items.map((item, index) => (
-          <PurchaseItemEditor
-            key={item.key}
-            item={item}
-            position={index + 1}
-            errors={errors?.items[item.key]}
-            context={itemContext?.[item.key]}
-            onChange={form.changeItem}
-            onRemove={form.removeItem}
-            // 最后一个项目不提供删除入口：套餐至少要留一个项目（PRD-PUR-003）。
-            removable={draft.items.length > 1}
-          />
-        ))}
-
-        <Button label="添加一个项目" icon="plus" onPress={form.addItem} />
-
-        {form.allocatedMinor === null ? null : (
-          <Card>
-            <Text style={styles.allocationLabel}>项目分摊合计</Text>
-            <Text style={styles.allocationValue}>{formatMinorAsYuan(form.allocatedMinor)}</Text>
-            <Text style={styles.allocationHint}>
-              分摊合计与套餐总价可以不同，折扣与赠送都会造成差额。
-            </Text>
-          </Card>
-        )}
-      </View>
+      <Button
+        label={form.saving ? '正在保存…' : saveLabel}
+        variant="primary"
+        loading={form.saving}
+        onPress={form.submit}
+        accessibilityLabel={saveLabel}
+      />
+      <Button label="返回套餐信息" onPress={form.goBack} disabled={form.saving} />
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  section: {
-    gap: Layout.fieldGap,
-  },
-  sectionTitle: {
-    ...TextStyles.sectionTitle,
-    color: Colors.textPrimary,
-  },
-  sectionHint: {
-    ...TextStyles.caption,
-    color: Colors.textSecondary,
-    marginTop: -Layout.cardGap,
-  },
-  allocationLabel: {
-    ...TextStyles.label,
-    color: Colors.textSecondary,
-  },
-  allocationValue: {
-    ...TextStyles.numeric,
-    color: Colors.textPrimary,
-    marginTop: Layout.tightGap,
-  },
-  allocationHint: {
-    ...TextStyles.caption,
-    color: Colors.textSecondary,
-    marginTop: Layout.tightGap,
-  },
-});

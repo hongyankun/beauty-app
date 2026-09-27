@@ -4,7 +4,7 @@ import {
   type DataAccess,
   type PurchaseItemCategory,
 } from '@/db';
-import { displayUnitAmountMinor, toFormCategory } from './purchase-item-columns';
+import { toFormCategory } from './purchase-item-columns';
 
 /**
  * 编辑套餐的初值查询用例。
@@ -23,11 +23,16 @@ export type PurchaseEditItem = {
   readonly category: PurchaseItemCategory;
   /** 购买次数 */
   readonly quantity: number;
-  /** 单次金额，整数分 */
-  readonly unitAmountMinor: number;
+  /** 分配到这个项目的总金额，整数分；单次均价只由它派生展示，不回写 */
+  readonly allocatedAmountMinor: number;
   readonly notes: string | null;
-  /** 已核销次数，只统计有效核销；次数最少只能改到这个值（PRD-PUR-008） */
+  /** 已核销次数，只统计有效核销 */
   readonly redeemedCount: number;
+  /**
+   * 购买次数最少能改到几次：有效核销数与现有次数中较小的一个（PRD-PUR-008）。
+   * 历史超用的项目可以保持或调高次数，不能调低；规则与 `update-purchase` 的事务内校验一致。
+   */
+  readonly minQuantity: number;
   /** 是否有过任何核销记录，含已撤销；为真时不允许从套餐中删除该项目 */
   readonly hasRedemptionHistory: boolean;
 };
@@ -74,9 +79,10 @@ export async function getPurchaseForEdit(
       name: row.name,
       category: toFormCategory(row.category_code),
       quantity: row.quantity,
-      unitAmountMinor: displayUnitAmountMinor(row.allocated_amount_minor, row.quantity),
+      allocatedAmountMinor: row.allocated_amount_minor,
       notes: row.notes,
       redeemedCount: row.active_redemption_count,
+      minQuantity: Math.min(row.active_redemption_count, row.quantity),
       hasRedemptionHistory: row.redemption_count > 0,
     })),
   };

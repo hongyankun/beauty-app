@@ -19,9 +19,6 @@ export const MINOR_UNITS_PER_YUAN = 100;
  */
 export const MAX_AMOUNT_MINOR = 9_999_999_999;
 
-/** 差额提示阈值：1 元（PRD 第 6.4 节、E-11）。 */
-export const ALLOCATION_TOLERANCE_MINOR = 100;
-
 export type AmountParseFailure =
   /** 未填写 */
   | 'empty'
