@@ -2,7 +2,6 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { Button, Card } from '@/components/ui';
 import { Colors, Layout, Radii, Spacing, TextStyles } from '@/theme';
-import { formatMinorAsYuan } from '@/utils/money';
 import { PURCHASE_ITEM_CATEGORY_LABELS } from '../categories';
 import type { PurchaseDetailItem } from '../services/get-purchase-detail';
 
@@ -41,7 +40,7 @@ export function PurchaseItemCard({ item, onRedeem }: PurchaseItemCardProps) {
         <Count label="剩余" value={`${item.remaining} 次`} emphasized={!usedUp} />
       </View>
 
-      <Text style={styles.meta}>单次金额 {formatMinorAsYuan(item.unitAmountMinor)}</Text>
+      <Text style={styles.meta}>单次均价 {item.averagePerUseText}</Text>
       {item.notes ? <Text style={styles.notes}>{item.notes}</Text> : null}
 
       <Button

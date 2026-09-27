@@ -6,7 +6,8 @@ import {
   type UsageStatus,
   type UtcTimestamp,
 } from '@/db';
-import { displayUnitAmountMinor, toFormCategory } from './purchase-item-columns';
+import { formatAveragePerUse } from './purchase-allocation';
+import { toFormCategory } from './purchase-item-columns';
 
 /**
  * 套餐详情查询用例。
@@ -27,8 +28,11 @@ export type PurchaseDetailItem = {
   readonly redeemedCount: number;
   /** 派生值：购买次数 − 已核销次数 */
   readonly remaining: number;
-  /** 单次金额，整数分 */
-  readonly unitAmountMinor: number;
+  /**
+   * 单次均价的展示文字，如「¥300.00/次」「约 ¥333.33/次」。
+   * 由分配总额 ÷ 购买次数派生，与套餐表单同一套算法，只用于展示，不写回（ADR-023）。
+   */
+  readonly averagePerUseText: string;
   readonly notes: string | null;
 };
 
@@ -103,7 +107,8 @@ export async function getPurchaseDetail(
     // 理论上不会为负；真为负说明数据异常，界面上仍然只展示 0，
     // 不把负数余次呈现给用户（E-05：不得允许负数余次）。
     remaining: Math.max(0, row.quantity - row.active_redemption_count),
-    unitAmountMinor: displayUnitAmountMinor(row.allocated_amount_minor, row.quantity),
+    // 购买次数由表约束保证为正整数（CHECK quantity > 0），分配金额为非负整数分。
+    averagePerUseText: formatAveragePerUse(row.allocated_amount_minor, row.quantity),
     notes: row.notes,
   }));
 

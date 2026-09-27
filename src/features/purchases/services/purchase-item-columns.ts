@@ -16,15 +16,6 @@ export function toFormCategory(categoryCode: string): PurchaseItemCategory {
     : 'other';
 }
 
-/**
- * 详情页展示的「单次金额」。
- *
- * 分配总额是唯一事实，单价只是派生的展示值（ADR-023），不会被写回。
- */
-export function displayUnitAmountMinor(allocatedAmountMinor: number, quantity: number): number {
-  return quantity > 0 ? Math.round(allocatedAmountMinor / quantity) : 0;
-}
-
 type StoredItem = {
   readonly name: string;
   readonly category_code: string;
