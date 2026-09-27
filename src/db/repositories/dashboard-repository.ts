@@ -11,55 +11,56 @@ import type { DashboardRepository, DashboardTotalsRow, RecentRedemptionRow } fro
 export function createDashboardRepository(db: SQLiteDatabase): DashboardRepository {
   return {
     async getTotals(profileId) {
-      // 三个标量子查询并列，不做 JOIN：项目与核销是两条独立的一对多路径，
-      // JOIN 到一起会产生笛卡尔积，`SUM(quantity)` 会被核销记录数放大
-      // （同 purchase-repository.listSummaries）。这条语句没有 FROM，
-      // 每个子查询各扫各的索引，结果恒为一行。
+      // 两个标量子查询并列，不做 JOIN 汇总：待使用次数必须逐项
+      // `MAX(0, quantity − 有效使用数)` 再相加，历史超用的项目只算 0，
+      // 不抵扣其他项目的余次（DATA_MODEL_V4 第 11.4 节）。有效使用数用一个
+      // 预聚合子查询 LEFT JOIN 进来，只扫一遍 usage_records。这条语句没有 FROM，
+      // 结果恒为一行。
       //
       // `COALESCE(SUM(...), 0)`：一条记录都没有时 SUM 返回 NULL，
       // 首页要显示的是 0 次 / ¥0.00，不是占位符。
       const row = await db.getFirstAsync<DashboardTotalsRow>(
         `SELECT
-            (SELECT COALESCE(SUM(i.quantity), 0)
+            (SELECT COALESCE(SUM(MAX(0, i.quantity - COALESCE(rc.active_count, 0))), 0)
                FROM purchase_items i
                JOIN purchases p ON p.id = i.purchase_id
-              WHERE p.profile_id = ?) AS total_quantity,
-            (SELECT COUNT(*)
-               FROM redemption_records r
-               JOIN purchase_items i ON i.id = r.purchase_item_id
-               JOIN purchases p ON p.id = i.purchase_id
-              WHERE p.profile_id = ? AND r.status = 'active') AS active_redemption_count,
+               LEFT JOIN (SELECT purchase_item_id, COUNT(*) AS active_count
+                            FROM usage_records
+                           WHERE status = 'active' AND purchase_item_id IS NOT NULL
+                           GROUP BY purchase_item_id) rc ON rc.purchase_item_id = i.id
+              WHERE p.profile_id = ?) AS remaining_count,
             (SELECT COALESCE(SUM(p.total_amount_minor), 0)
                FROM purchases p
               WHERE p.profile_id = ?) AS total_amount_minor`,
-        [profileId, profileId, profileId],
+        [profileId, profileId],
       );
       // 语句必定返回一行；这里只是让类型收敛，不是在掩盖读取失败——
       // 真正的失败会以异常抛出，由 hook 转成错误状态。
-      return row ?? { total_quantity: 0, active_redemption_count: 0, total_amount_minor: 0 };
+      return row ?? { remaining_count: 0, total_amount_minor: 0 };
     },
 
     async listRecentRedemptions(profileId, limit) {
-      // 排序与套餐详情里的核销历史一致：核销日期倒序，同一天按创建时间倒序，
+      // 排序与套餐详情里的使用历史一致：事件日期倒序，同一天按创建时间倒序，
       // 让「刚刚记录的那一条」稳定排在同日的最前面。
       //
-      // 两次 JOIN 既取出所属项目与套餐的名称，也是这条查询唯一的档案归属校验点：
-      // redemption_records 与 purchase_items 都没有 profile_id。
+      // 只取仍关联套餐项目的有效记录：卡片要能点进套餐详情。两次 JOIN 取出项目与套餐的
+      // 当前名称，并以 `purchases.profile_id` 校验档案归属。
       return db.getAllAsync<RecentRedemptionRow>(
         `SELECT
-            r.id,
-            r.purchase_item_id,
+            u.id,
+            u.purchase_item_id,
             i.name   AS item_name,
             p.id     AS purchase_id,
             p.name   AS purchase_name,
-            r.redeemed_on,
-            r.institution_name_snapshot,
-            r.city_snapshot
-           FROM redemption_records r
-           JOIN purchase_items i ON i.id = r.purchase_item_id
+            e.occurred_on AS redeemed_on,
+            e.institution_name_snapshot,
+            e.city_name_snapshot AS city_snapshot
+           FROM usage_records u
+           JOIN beauty_events e ON e.id = u.event_id
+           JOIN purchase_items i ON i.id = u.purchase_item_id
            JOIN purchases p ON p.id = i.purchase_id
-          WHERE p.profile_id = ? AND r.status = 'active'
-          ORDER BY r.redeemed_on DESC, r.created_at DESC
+          WHERE p.profile_id = ? AND e.profile_id = p.profile_id AND u.status = 'active'
+          ORDER BY e.occurred_on DESC, u.created_at DESC, u.id DESC
           LIMIT ?`,
         [profileId, limit],
       );

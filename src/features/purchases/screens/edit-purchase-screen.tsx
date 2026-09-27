@@ -9,7 +9,11 @@ import { PurchaseForm } from '../components/purchase-form';
 import type { PurchaseItemEditorContext } from '../components/purchase-item-editor';
 import { usePurchaseEditModel } from '../hooks/use-purchase-edit-model';
 import { usePurchaseForm } from '../hooks/use-purchase-form';
-import { createDraftFromEdit, type PurchaseDraftInput } from '../purchase-draft';
+import {
+  createDraftFromEdit,
+  type PurchaseDraftInput,
+  type QuantityFloor,
+} from '../purchase-draft';
 import type { PurchaseEditModel } from '../services/get-purchase-for-edit';
 import { updatePurchase } from '../services/update-purchase';
 
@@ -93,8 +97,19 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
   const [removedItemIds, setRemovedItemIds] = useState<readonly string[]>([]);
 
   // 草稿的 key 对既有项目就是项目 ID，所以这两张表可以直接按 key 索引。
-  const minQuantityByKey = useMemo(
-    () => Object.fromEntries(model.items.map((item) => [item.id, item.redeemedCount])),
+  // 下限取有效核销数与现有次数中较小的一个：历史超用的项目可以保持或调高次数，
+  // 不能再调低（与 `updatePurchase` 的事务内校验同一口径）。
+  const minQuantityByKey = useMemo<Record<string, QuantityFloor>>(
+    () =>
+      Object.fromEntries(
+        model.items.map((item) => [
+          item.id,
+          {
+            minQuantity: Math.min(item.redeemedCount, item.quantity),
+            redeemedCount: item.redeemedCount,
+          },
+        ]),
+      ),
     [model],
   );
   const itemContext = useMemo<Record<string, PurchaseItemEditorContext>>(
@@ -104,6 +119,7 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
           item.id,
           {
             redeemedCount: item.redeemedCount,
+            minQuantity: Math.min(item.redeemedCount, item.quantity),
             hasRedemptionHistory: item.hasRedemptionHistory,
           },
         ]),

@@ -1,4 +1,4 @@
-import { type BusinessDate, type PurchaseItemCategory } from '@/db';
+import { PURCHASE_ITEM_CATEGORIES, type BusinessDate, type PurchaseItemCategory } from '@/db';
 import { compareBusinessDates, isBusinessDate } from '@/utils/business-date';
 import { MAX_AMOUNT_MINOR } from '@/utils/money';
 import { PurchaseServiceError } from './errors';
@@ -64,6 +64,9 @@ export function assertPurchaseBasicsAreValid(input: PurchaseBasicsInput): void {
 /** 校验单个项目的字段（PRD 第 6.2、6.4 节）。 */
 export function assertPurchaseItemIsValid(item: PurchaseItemFields): void {
   assertValid(item.name.trim() !== '', '请填写项目名称');
+  // schema v4 的 category_code 只约束非空（DATA_MODEL_V4 第 4.4 节），
+  // 分类取值是否合法从数据库 CHECK 移到了这一层。
+  assertValid(PURCHASE_ITEM_CATEGORIES.includes(item.category), '请选择一个有效的项目分类');
   assertValid(Number.isInteger(item.quantity) && item.quantity > 0, '购买次数必须是大于 0 的整数');
   assertValid(
     Number.isSafeInteger(item.unitAmountMinor) &&

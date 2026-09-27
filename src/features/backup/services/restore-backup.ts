@@ -81,8 +81,9 @@ async function assertSchemaSupported(
 /**
  * 先清空当前档案，再按依赖顺序写回。
  *
- * 删除的顺序是子表在前（收藏、心愿、核销、项目、套餐、机构），
- * 写入的顺序正好相反（档案、机构、套餐、项目、核销、心愿、收藏）。
+ * 删除的顺序是子表在前（收藏、心愿、使用记录、变美记录、项目、套餐、人、机构），
+ * 写入按依赖顺序（档案、人、机构、套餐、项目、变美记录、使用记录、心愿、收藏；
+ * DATA_MODEL_V4 第 11.5 节）。人与机构互不引用，两者谁先都不违反依赖。
  * 这两个顺序必须手工维护：独占事务跑在新连接上，`PRAGMA foreign_keys`
  * 不继承，且 BEGIN 之后再开是静默无效的。**不是关掉了外键，是它本来就没开**——
  * 所以我们既不会去关它，也不能指望它兜底，只能自己排好顺序，再在写完后自查
@@ -99,10 +100,12 @@ async function writeDocument(
   const { restore } = repositories;
   await restore.deleteProfileData(profileId);
   await restore.upsertProfile(document.profile);
+  await restore.insertPeople(document.people);
   await restore.insertInstitutions(document.institutions);
   await restore.insertPurchases(document.purchases);
   await restore.insertPurchaseItems(document.purchaseItems);
-  await restore.insertRedemptionRecords(document.redemptionRecords);
+  await restore.insertBeautyEvents(document.beautyEvents);
+  await restore.insertUsageRecords(document.usageRecords);
   await restore.insertWishlistItems(document.wishlistItems);
   await restore.insertCatalogFavorites(document.catalogFavorites);
 }
@@ -116,8 +119,9 @@ async function writeDocument(
  *    挡下却没被发现）与多留了（删除漏掉了一部分，恢复后混进了旧数据）。
  *    数的是**全表**而不是本档案：单档案 App 里全表就该只有这一个档案的数据，
  *    多出来的行无论属于谁都是问题。
- * 2. **引用完整性。** 外键在这个连接上没生效，所以孤儿项目、孤儿核销、
- *    指向不存在机构的引用全部自己数一遍，六个计数必须都是 0。
+ * 2. **引用完整性。** 外键在这个连接上没生效，所以孤儿项目、孤儿使用记录、
+ *    指向不存在的人与机构的引用、不属于本档案的行全部自己数一遍，必须都是 0；
+ *    「自己」必须恰好一个。
  * 3. **档案确实在。** 恢复完却没有可用档案，等于把 App 恢复成了一块砖。
  *
  * 这些是**检查**，不是修复：发现不对就整体回滚，绝不「顺手补一下」。
@@ -130,10 +134,12 @@ async function verifyRestored(
 ): Promise<void> {
   const counts = await repositories.restore.countAllRows();
   const expected = {
+    people: document.people.length,
     institutions: document.institutions.length,
     purchases: document.purchases.length,
     purchase_items: document.purchaseItems.length,
-    redemption_records: document.redemptionRecords.length,
+    beauty_events: document.beautyEvents.length,
+    usage_records: document.usageRecords.length,
     wishlist_items: document.wishlistItems.length,
     catalog_favorites: document.catalogFavorites.length,
   } as const;
@@ -146,8 +152,8 @@ async function verifyRestored(
     throw new BackupError('verify');
   }
 
-  const orphans = await repositories.restore.countOrphans(profileId);
-  if (Object.values(orphans).some((count) => count !== 0)) {
+  const { self_count: selfCount, ...orphans } = await repositories.restore.countOrphans(profileId);
+  if (selfCount !== 1 || Object.values(orphans).some((count) => count !== 0)) {
     throw new BackupError('verify');
   }
 

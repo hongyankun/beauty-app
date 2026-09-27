@@ -48,3 +48,36 @@ export const PURCHASE_ITEM_CATEGORIES = [
 
 /** 核销状态（PRD 第 7.1 节）。界面使用「撤销核销」等产品语言，不暴露这两个值。 */
 export const REDEMPTION_STATUSES = ['active', 'void'] as const;
+
+/**
+ * 默认档案下「自己」的固定 ID（DATA_MODEL_V4 第 4.2 节）。
+ *
+ * 只在**创建**「自己」时使用：v4 迁移、新装数据库与备份 v1 → v2 转换共用同一条规则，
+ * 同一份旧数据两条路径得到同一个 ID。**查找**「自己」一律用 `(profile_id, is_self = 1)`，
+ * 不得用这个常量：从 v2 备份恢复后，「自己」的 ID 是备份里的那个。
+ */
+export const SELF_PERSON_ID = '00000000-0000-4000-8000-000000000002';
+
+/** 「自己」的显示名称，v4 范围内不可改名（PRD 第 5B.4 节）。 */
+export const SELF_PERSON_DISPLAY_NAME = '自己';
+
+/** 购买类型：套餐 / 单次购买（DATA_MODEL_V4 第 4.3、7 节）。 */
+export const PURCHASE_KINDS = ['package', 'single'] as const;
+
+/** 人员状态：使用中 / 已归档。「自己」只能是使用中。 */
+export const PERSON_STATUSES = ['active', 'archived'] as const;
+
+/** 使用记录状态，取值与旧核销状态相同，界面同样不暴露。 */
+export const USAGE_STATUSES = ['active', 'void'] as const;
+
+/**
+ * 使用记录来源（DATA_MODEL_V4 第 5.1 节），v4 一次冻结全部五个取值。
+ * `deleted_package` 只能由删除套餐产生。界面不出现这些技术取值。
+ */
+export const USAGE_SOURCE_KINDS = [
+  'package_item',
+  'single_purchase',
+  'external',
+  'unlinked',
+  'deleted_package',
+] as const;

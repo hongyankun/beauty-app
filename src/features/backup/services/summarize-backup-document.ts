@@ -19,10 +19,14 @@ import type { BackupDocument } from '../backup-document';
 export type BackupSummary = {
   /** 备份生成时间，已按设备本地时区格式化到分钟；无法解析时为 null。 */
   readonly exportedAtLabel: string | null;
-  /** 备份格式版本。与数据库 schema 版本是两回事，两者都不是 App 版本号。 */
+  /**
+   * 文件自身的备份格式版本。与数据库 schema 版本是两回事，两者都不是 App 版本号。
+   * 格式 1 的文件虽已在内存中转换为格式 2，这里仍显示 1：用户核对的是「选中的这份文件」。
+   */
   readonly formatVersion: number;
   readonly purchaseCount: number;
   readonly purchaseItemCount: number;
+  /** 使用记录条数（含已撤销）。界面仍沿用「核销记录」的叫法，事件表单上线前不改文案。 */
   readonly redemptionCount: number;
   readonly institutionCount: number;
   readonly wishlistCount: number;
@@ -30,13 +34,16 @@ export type BackupSummary = {
 };
 
 /** 从一份已经校验过的备份里数出摘要。纯函数。 */
-export function summarizeBackupDocument(document: BackupDocument): BackupSummary {
+export function summarizeBackupDocument(
+  document: BackupDocument,
+  sourceFormatVersion: number = document.formatVersion,
+): BackupSummary {
   return {
     exportedAtLabel: formatTimestampAsLocalMinute(document.exportedAt),
-    formatVersion: document.formatVersion,
+    formatVersion: sourceFormatVersion,
     purchaseCount: document.purchases.length,
     purchaseItemCount: document.purchaseItems.length,
-    redemptionCount: document.redemptionRecords.length,
+    redemptionCount: document.usageRecords.length,
     institutionCount: document.institutions.length,
     wishlistCount: document.wishlistItems.length,
     favoriteCount: document.catalogFavorites.length,

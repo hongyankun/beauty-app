@@ -10,7 +10,7 @@ import { summarizeBackupDocument, type BackupSummary } from './summarize-backup-
 export type OpenBackupFileResult =
   | {
       readonly status: 'opened';
-      /** 已经校验过、档案 ID 已归到本机的文档。确认覆盖时原样交给恢复事务。 */
+      /** 已经校验过、档案 ID 已归到本机的格式 2 文档。确认覆盖时原样交给恢复事务。 */
       readonly document: BackupDocument;
       /** 给用户核对「是不是这一份」的摘要。 */
       readonly summary: BackupSummary;
@@ -46,8 +46,12 @@ export async function openBackupFile(): Promise<OpenBackupFileResult> {
     }
 
     const text = await readPickedFile(picked.file.uri);
-    const document = parseBackupDocument(text);
-    return { status: 'opened', document, summary: summarizeBackupDocument(document) };
+    const { document, sourceFormatVersion } = parseBackupDocument(text);
+    return {
+      status: 'opened',
+      document,
+      summary: summarizeBackupDocument(document, sourceFormatVersion),
+    };
   } catch (error) {
     // `toBackupError` 的第一个参数只是兜底：上游各步都已经带着自己的 stage 抛出，
     // 能落到 `fileRead` 的只有真正没被分类的意外。

@@ -15,6 +15,7 @@ import {
   type PurchaseDraftInput,
   type PurchaseFormErrors,
   type PurchaseItemDraft,
+  type QuantityFloor,
 } from '../purchase-draft';
 import { toUserMessage } from '../services/errors';
 import { useInstitutionOptions } from './use-institution-options';
@@ -53,7 +54,7 @@ export type UsePurchaseFormOptions = {
     readonly discardLabel: string;
   };
   /** 各项目的购买次数下限，以草稿 key 为索引；新增流程不传（见 `validatePurchaseDraft`） */
-  readonly minQuantityByKey?: Readonly<Record<string, number>>;
+  readonly minQuantityByKey?: Readonly<Record<string, QuantityFloor>>;
 };
 
 export type PurchaseFormController = {

@@ -11,14 +11,18 @@ import {
 /**
  * 编辑机构主数据用例。
  *
- * 只写 `institutions` 这一行。**不碰** `purchases` 与 `redemption_records`
- * 上的 `institution_name_snapshot` 与 `city_snapshot`：那两份文本记录的是
+ * 只写 `institutions` 这一行。**不碰** `purchases` 与 `beauty_events`
+ * 上的机构名称与地点快照：那两份文本记录的是
  * 「那一次购买/核销当时的机构叫什么、在哪个城市」，是历史事实，
  * 不随主数据改名而变（PRD 第 5A.2 节、PRD-INST-005、PRD-PUR-018）。
  * 产品上也没有「同步更新历史记录」这个动作（任务书第六节）。
  *
  * 机构 ID、`profile_id`、`created_at` 与 `is_archived` 都不在可写范围内：
  * ID 不变，历史记录与它的外键关联自然一条都不会断。
+ *
+ * 结构化地点（schema v4 的省市代码）在省市选择器接线之前（BT-0019B2）没有编辑入口：
+ * 城市文字不变时原样保留；城市文字被改掉时一并清空三个代码列——旧代码描述的是
+ * 旧城市，留着它会让代码与文字互相矛盾（DATA_MODEL_V4 第 4.7 节）。
  */
 
 export type UpdateInstitutionInput = {
@@ -68,6 +72,7 @@ export async function updateInstitution(
 
     // 3. 写入。受影响行数对不上就回滚——它要么已被删除，要么已不属于本档案，
     //    两种情况都不该把一份过时的输入盖上去。
+    const keepLocation = city === existing.city;
     const changed = await repositories.institutions.updateDetails({
       id: existing.id,
       profile_id: DEFAULT_PROFILE_ID,
@@ -75,6 +80,9 @@ export async function updateInstitution(
       normalized_name: normalizedName,
       city,
       notes,
+      province_code: keepLocation ? existing.province_code : null,
+      province_name: keepLocation ? existing.province_name : null,
+      city_code: keepLocation ? existing.city_code : null,
       updated_at: now,
     });
     if (changed !== 1) {

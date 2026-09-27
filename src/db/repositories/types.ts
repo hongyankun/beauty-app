@@ -3,12 +3,16 @@ import type {
   CatalogFavoriteRow,
   InstitutionRow,
   ProfileRow,
+  BeautyEventRow,
+  PersonRow,
   PurchaseItemCategory,
   PurchaseItemRow,
+  PurchaseKind,
   PurchaseRow,
-  RedemptionRecordRow,
-  RedemptionStatus,
   SqliteBoolean,
+  UsageRecordRow,
+  UsageSourceKind,
+  UsageStatus,
   UtcTimestamp,
   WishlistItemRow,
 } from '../types';
@@ -33,9 +37,10 @@ export type InstitutionOption = {
  * 两个计数的口径不同，不能互相套用：
  *
  * - `purchase_count` 只数 `purchases.institution_id`；
- * - `redemption_count` 只数 `redemption_records.institution_id`，
- *   且**不按 status 过滤**——已撤销的核销同样是发生过的历史，
- *   归档确认框里少报一条就是误导。
+ * - `redemption_count` 数「发生在这家机构的使用记录」：`usage_records` 经
+ *   `beauty_events.institution_id` 归到机构（schema v4 起核销记录退役，
+ *   字段名沿用旧名以免牵动界面）。**不按 status 过滤**——已撤销的记录同样是
+ *   发生过的历史，归档确认框里少报一条就是误导。
  *
  * 两个计数都**只认外键**，绝不从名称快照反推：快照是历史文本，
  * 同名的另一家机构、或者改名前的旧文本都会把计数算错。
@@ -47,6 +52,9 @@ export type InstitutionUsageRow = {
   readonly city: string | null;
   readonly notes: string | null;
   readonly is_archived: SqliteBoolean;
+  readonly province_code: string | null;
+  readonly province_name: string | null;
+  readonly city_code: string | null;
   readonly created_at: UtcTimestamp;
   readonly updated_at: UtcTimestamp;
   readonly purchase_count: number;
@@ -65,13 +73,22 @@ export type InstitutionConflictRow = {
   readonly is_archived: SqliteBoolean;
 };
 
-/** 更新一个机构的主数据时允许改写的列；`id` 与 `profile_id` 只用于定位。 */
+/**
+ * 更新一个机构的主数据时允许改写的列；`id` 与 `profile_id` 只用于定位。
+ *
+ * 省市代码三列与 `city` 一起写：城市文字改了而代码不跟着改，就会出现
+ * 「文字写北京、代码指上海」的机构。省市选择器接线之前（BT-0019B2），
+ * 调用方在城市文字变化时把三列清空，文字不变时原样带回。
+ */
 export type InstitutionUpdate = {
   readonly id: string;
   readonly profile_id: string;
   readonly name: string;
   readonly normalized_name: string;
   readonly city: string | null;
+  readonly province_code: string | null;
+  readonly province_name: string | null;
+  readonly city_code: string | null;
   readonly notes: string | null;
   readonly updated_at: UtcTimestamp;
 };
@@ -119,8 +136,8 @@ export type InstitutionRepository = {
   /**
    * 更新机构的名称、判重键、城市与备注，返回实际更新的行数（正常为 1）。
    *
-   * 只改 `institutions` 这一行。**不触及** `purchases` 与 `redemption_records`
-   * 上的机构与城市快照：那些记录的是「那一次购买/核销当时的机构叫什么」，
+   * 只改 `institutions` 这一行。**不触及** `purchases` 与 `beauty_events`
+   * 上的机构与地点快照：那些记录的是「那一次购买/核销当时的机构叫什么」，
    * 是历史事实，不随主数据改名而变（PRD 第 5A.2 节、PRD-INST-005、PRD-PUR-018）。
    *
    * `profile_id`、`created_at`、`is_archived` 不在可写列内。
@@ -162,18 +179,26 @@ export type PurchaseSummaryRow = {
   readonly created_at: UtcTimestamp;
   readonly item_count: number;
   readonly total_quantity: number;
+  /** 来自这个套餐的有效使用记录数（schema v4 起数 `usage_records`，字段名沿用旧名） */
   readonly active_redemption_count: number;
+  /**
+   * 各项目 `MAX(0, quantity − 有效使用数)` 之和。必须逐项夹到 0 再相加：
+   * 历史数据里某个项目可能超用（DATA_MODEL_V4 第 11.4 节），直接用
+   * `total_quantity − active_redemption_count` 会让它抵掉其他项目的余次。
+   */
+  readonly remaining_count: number;
 };
 
 /**
- * 永久删除一个套餐会连带清除多少数据（PRD-PUR-009、E-08）。
+ * 永久删除一个套餐的影响范围（ADR-021、PRD 第 5B.7 节）。
  *
- * 核销记录数**包含已撤销的记录**：它们同样会随套餐一起消失，
- * 确认框里少报一条都是误导。
+ * - `item_count`：会被删除的项目数。
+ * - `usage_count`：引用这些项目的使用记录数，**含已撤销**。它们不会被删除，
+ *   而是保留下来、改为「原套餐已删除」；确认框要把这个数说出来。
  */
 export type PurchaseDeletionImpactRow = {
   readonly item_count: number;
-  readonly redemption_count: number;
+  readonly usage_count: number;
 };
 
 /**
@@ -235,14 +260,16 @@ export type DatedPurchaseItemFactRow = {
 export type PurchaseItemEditRow = {
   readonly id: string;
   readonly name: string;
-  readonly category: PurchaseItemCategory;
+  readonly category_code: string;
+  readonly service_code: string | null;
+  readonly custom_name: string | null;
   readonly quantity: number;
-  readonly unit_amount_minor: number;
+  readonly allocated_amount_minor: number;
   readonly notes: string | null;
   readonly created_at: UtcTimestamp;
-  /** 有效核销数（只数 `status = 'active'`） */
+  /** 有效使用记录数（只数 `status = 'active'`） */
   readonly active_redemption_count: number;
-  /** 全部核销数，含已撤销 */
+  /** 全部使用记录数，含已撤销 */
   readonly redemption_count: number;
 };
 
@@ -251,9 +278,11 @@ export type PurchaseItemUpdate = {
   readonly id: string;
   readonly purchase_id: string;
   readonly name: string;
-  readonly category: PurchaseItemCategory;
+  readonly category_code: string;
+  readonly service_code: string | null;
+  readonly custom_name: string | null;
   readonly quantity: number;
-  readonly unit_amount_minor: number;
+  readonly allocated_amount_minor: number;
   readonly notes: string | null;
   readonly updated_at: UtcTimestamp;
 };
@@ -295,24 +324,34 @@ export type PurchaseRepository = {
   /** 读取单个项目及其所属套餐的机构与有效期，同时校验档案归属。 */
   findItemContext(profileId: string, purchaseItemId: string): Promise<PurchaseItemContextRow | null>;
   /**
-   * 统计这个套餐名下的项目数与全部核销记录数（含已撤销）。
+   * 统计这个套餐名下的项目数与引用它们的使用记录数（含已撤销）。
    *
    * 不带 `profileId`，同 `listItemDetails`：调用方先用 `findById` 确认归属。
    */
   getDeletionImpact(purchaseId: string): Promise<PurchaseDeletionImpactRow>;
   /**
-   * 物理删除套餐及其项目与核销记录，返回被删除的**套餐**行数（正常为 1）。
+   * 引用这个套餐任一项目的使用记录改为「原套餐已删除」，返回改动的行数。
    *
-   * 机构与档案不在删除范围内（ADR-016、PRD-PUR-014）。
-   * 必须在事务内调用：实现会分多条语句清理子表。
+   * 只改来源三件事：`source_kind`、`purchase_item_id`（置空）与 `updated_at`；
+   * 快照、使用人、状态与撤销信息原样保留（ADR-021）。必须在删除项目之前调用。
+   */
+  detachUsagesFromPurchase(purchaseId: string, updatedAt: UtcTimestamp): Promise<number>;
+  /** 仍指向这个套餐项目的使用记录数；解除关联之后必须为 0。 */
+  countUsagesLinkedToPurchase(purchaseId: string): Promise<number>;
+  /**
+   * 删除套餐及其项目，返回被删除的**套餐**行数（正常为 1）。
+   *
+   * 不删除任何变美记录与使用记录：调用方必须先 `detachUsagesFromPurchase`。
+   * 机构、人与档案不在删除范围内（ADR-021、PRD-PUR-014）。
+   * 必须在事务内调用：实现分两条语句。
    */
   deletePermanently(profileId: string, purchaseId: string): Promise<number>;
   insert(row: PurchaseRow): Promise<void>;
   /**
    * 更新套餐自身的可编辑字段，返回实际更新的行数（正常为 1）。
    *
-   * 只改本行：机构与城市快照写在 `purchases` 上，**不触及 `redemption_records`
-   * 的同名快照列**。核销快照记录的是「那一次核销发生时的机构」，
+   * 只改本行：机构与城市快照写在 `purchases` 上，**不触及 `beauty_events`
+   * 的地点快照**。事件快照记录的是「那一次实际发生时的机构」，
    * 是历史事实，不随套餐改机构而变（PRD 第 5A.2 节、PRD-INST-005）。
    *
    * `currency` 不在可写列内：第一版只有 CNY（Q-11），编辑页也没有这个字段。
@@ -322,15 +361,15 @@ export type PurchaseRepository = {
   /**
    * 更新一个既有项目，返回实际更新的行数（正常为 1）。
    *
-   * 走 UPDATE 而不是「删掉再插一条」：项目 ID 是核销记录的外键目标，
-   * 换 ID 等于把这个项目的核销历史全部指向空处（任务书第三节）。
+   * 走 UPDATE 而不是「删掉再插一条」：项目 ID 是使用记录的外键目标，
+   * 换 ID 等于把这个项目的使用历史全部指向空处（任务书第三节）。
    */
   updateItem(row: PurchaseItemUpdate): Promise<number>;
   /**
-   * 删除一个**从未产生过任何核销记录**的项目，返回实际删除的行数。
+   * 删除一个**从未被任何使用记录引用过**的项目，返回实际删除的行数。
    *
-   * 「没有核销历史」是写进 SQL 的删除条件而不是先查后删：即便调用方漏判，
-   * 或在读与写之间刚好新增了一条核销，这条语句也只会删 0 行。
+   * 「没有使用历史」是写进 SQL 的删除条件而不是先查后删：即便调用方漏判，
+   * 或在读与写之间刚好新增了一条使用记录，这条语句也只会删 0 行。
    * 调用方必须校验返回值为 1，为 0 时回滚并提示刷新（任务书第七节）。
    */
   deleteItem(purchaseId: string, purchaseItemId: string): Promise<number>;
@@ -360,9 +399,9 @@ export type PurchaseUpdate = {
 export type PurchaseItemDetailRow = {
   readonly id: string;
   readonly name: string;
-  readonly category: PurchaseItemCategory;
+  readonly category_code: string;
   readonly quantity: number;
-  readonly unit_amount_minor: number;
+  readonly allocated_amount_minor: number;
   readonly notes: string | null;
   readonly created_at: UtcTimestamp;
   readonly active_redemption_count: number;
@@ -378,8 +417,12 @@ export type PurchaseItemDetailRow = {
 export type PurchaseItemContextRow = {
   readonly id: string;
   readonly name: string;
+  readonly category_code: string;
+  readonly service_code: string | null;
+  readonly custom_name: string | null;
   readonly quantity: number;
   readonly purchase_id: string;
+  readonly purchase_kind: PurchaseKind;
   readonly purchase_name: string;
   readonly purchase_date: BusinessDate;
   readonly expires_on: BusinessDate | null;
@@ -388,7 +431,13 @@ export type PurchaseItemContextRow = {
   readonly city_snapshot: string | null;
 };
 
-/** 套餐详情中的一条核销历史：核销字段 + 所属项目名称。 */
+/**
+ * 套餐详情中的一条使用历史（界面上仍叫「核销记录」）。
+ *
+ * schema v4 起核销记录退役，这里读的是 `usage_records` JOIN `beauty_events`：
+ * 日期、机构与城市来自变美记录的快照，状态与撤销信息来自使用记录本身。
+ * `item_name` 是项目**当前**的名称，与 v3 口径相同。
+ */
 export type RedemptionHistoryRow = {
   readonly id: string;
   readonly purchase_item_id: string;
@@ -396,7 +445,7 @@ export type RedemptionHistoryRow = {
   readonly redeemed_on: BusinessDate;
   readonly institution_name_snapshot: string | null;
   readonly city_snapshot: string | null;
-  readonly status: RedemptionStatus;
+  readonly status: UsageStatus;
   readonly notes: string | null;
   readonly created_at: UtcTimestamp;
   /** 撤销时间；`status = 'active'` 时必为空（表级 CHECK 约束） */
@@ -415,23 +464,24 @@ export type RedemptionHistoryRow = {
 export type RedemptionStatusFilter = 'all' | 'active' | 'void';
 
 /**
- * 完整核销历史里的一条记录：核销本身 + 它所属的项目与套餐。
+ * 完整核销历史里的一条记录：一条使用记录 + 它所属的变美记录快照。
  *
- * 机构与城市取的是 `redemption_records` 自己的快照列，**不是**套餐现在的机构：
- * 快照记的是「那一次实际在哪做的」，套餐后来改了机构也不该改写它
- * （PRD 第 5A.2 节、PRD-INST-005、PRD-PUR-018）。
+ * 机构与城市取的是**变美记录自己的**快照，不是套餐现在的机构
+ * （PRD 第 5A.2 节、PRD-INST-005、PRD-PUR-018）。项目与套餐名称同样取使用记录上的快照：
+ * 自 schema v4 起套餐被删除后记录仍然保留（ADR-021），此时已经没有项目可以联查。
  *
- * 与 `RedemptionHistoryRow` 的区别：那个是套餐详情内的历史，已知属于哪个套餐；
- * 这里跨套餐，所以必须带上套餐 ID 与名称，点击才知道要跳到哪一页。
+ * `purchase_item_id` 与 `purchase_id` 在来源不是套餐（原套餐已删除、外部来源、
+ * 暂不关联）时为 null，界面据此不提供跳转。`source_kind` 一并返回供界面说明来源。
  */
 export type RedemptionHistoryEntryRow = {
   readonly id: string;
-  readonly purchase_item_id: string;
-  readonly item_name: string;
-  readonly purchase_id: string;
-  readonly purchase_name: string;
+  readonly source_kind: UsageSourceKind;
+  readonly purchase_item_id: string | null;
+  readonly item_name: string | null;
+  readonly purchase_id: string | null;
+  readonly purchase_name: string | null;
   readonly redeemed_on: BusinessDate;
-  readonly status: RedemptionStatus;
+  readonly status: UsageStatus;
   readonly institution_name_snapshot: string | null;
   readonly city_snapshot: string | null;
   readonly notes: string | null;
@@ -441,77 +491,85 @@ export type RedemptionHistoryEntryRow = {
 };
 
 /**
- * 撤销核销所需的上下文：核销记录本身，加上它所属的项目与套餐。
+ * 撤销一条使用记录所需的上下文。
  *
  * 一次查询同时回答三个问题：记录在不在、属不属于这个档案、现在是不是有效。
- * 归属只能靠 JOIN 得到——`redemption_records` 与 `purchase_items` 都没有
- * `profile_id`，唯一带档案列的是 `purchases`。
+ * 归属经 `beauty_events.profile_id` 判断——使用记录不一定关联套餐
+ * （原套餐已删除时 `purchase_item_id` 为空），不能再靠套餐 JOIN 取档案。
  */
 export type RedemptionContextRow = {
   readonly id: string;
-  readonly purchase_item_id: string;
-  readonly item_name: string;
-  readonly purchase_id: string;
+  readonly purchase_item_id: string | null;
+  readonly purchase_id: string | null;
   readonly redeemed_on: BusinessDate;
-  readonly status: RedemptionStatus;
-  readonly institution_name_snapshot: string | null;
-  readonly city_snapshot: string | null;
+  readonly status: UsageStatus;
 };
 
 export type RedemptionRepository = {
   /**
-   * 某个项目的有效核销数（只数 `status = 'active'`）。
+   * 某个项目的有效使用记录数（只数 `status = 'active'`）。
    *
    * 这是余次的唯一依据。在事务内调用时，它读到的是事务快照，
    * 与随后插入的那条记录处在同一个原子区间。
    */
   countActiveByItem(purchaseItemId: string): Promise<number>;
-  /** 套餐下的全部核销记录，按核销日期倒序、同日按创建时间倒序。 */
+  /** 引用这个套餐项目的使用记录，按事件日期倒序、同日按创建时间倒序、再按 ID 倒序。 */
   listByPurchase(purchaseId: string): Promise<RedemptionHistoryRow[]>;
   /**
-   * 当前档案下**跨套餐**的全部核销记录，按 `filter` 过滤状态。
+   * 当前档案下的全部使用记录，按 `filter` 过滤状态。
    *
-   * 排序为 `redeemed_on DESC, created_at DESC, id DESC`。第三列是稳定性保险：
+   * 排序为 `occurred_on DESC, created_at DESC, id DESC`。第三列是稳定性保险：
    * 同一天同一毫秒导入的两条记录若只比前两列，返回顺序由 SQLite 自行决定，
    * 两次查询可能不一致，分组后看起来就像记录在跳动。
    *
-   * 已用完与已过期套餐下的记录照常返回：它们仍然是发生过的事实。
-   * 已被永久删除的套餐不会出现——那些记录在删除时已随套餐物理消失（ADR-016）。
+   * 已用完、已过期与已被删除的套餐下的记录照常返回：它们仍然是发生过的事实（ADR-021）。
    */
   listHistory(
     profileId: string,
     filter: RedemptionStatusFilter,
   ): Promise<RedemptionHistoryEntryRow[]>;
-  /** 按 ID 读取一条核销及其项目与套餐，同时校验档案归属；不存在时返回 null。 */
+  /** 按 ID 读取一条使用记录，同时校验档案归属；不存在时返回 null。 */
   findById(profileId: string, redemptionId: string): Promise<RedemptionContextRow | null>;
   /**
-   * 把一条**仍然有效**的核销改为已撤销，返回实际更新的行数。
+   * 把一条**仍然有效**的使用记录改为已撤销，返回实际更新的行数。
    *
-   * 条件写在 SQL 里（`WHERE id = ? AND status = 'active'`）而不是只靠先读后判断：
-   * 读与写之间哪怕在同一个事务里，条件更新也是唯一能让「已经撤销过」
-   * 这件事以 0 行结果自证的方式。调用方必须校验返回值为 1，
-   * 否则余次会被重复恢复（任务书第六节）。
+   * 只改这一条使用记录：变美记录与同一事件下的其他使用记录不受影响（PRD-EVT-007）。
+   * 条件写在 SQL 里（`status = 'active'` 且事件属于该档案）而不是只靠先读后判断，
+   * 已经撤销过的记录以 0 行结果自证。调用方必须校验返回值为 1。
    */
   voidById(
+    profileId: string,
     redemptionId: string,
     voidedAt: UtcTimestamp,
     voidReason: string | null,
   ): Promise<number>;
-  insert(row: RedemptionRecordRow): Promise<void>;
+  insertEvent(row: BeautyEventRow): Promise<void>;
+  insertUsage(row: UsageRecordRow): Promise<void>;
+  /** 某个变美记录下的使用记录条数（含已撤销）；用于写入后的自检。 */
+  countEventUsages(eventId: string): Promise<number>;
+  /** 该档案的变美记录总数；删除套餐前后各数一次，确认真实历史一条未少（ADR-021）。 */
+  countEvents(profileId: string): Promise<number>;
+};
+
+/** 使用人的读取契约。人员管理页面属于 BT-0020，这里只提供兼容层需要的最小能力。 */
+export type PeopleRepository = {
+  /**
+   * 该档案的「自己」。按 `(profile_id, is_self = 1)` 查找，不依赖固定 ID
+   * （DATA_MODEL_V4 第 4.2 节）；不存在时返回 null，由调用方判定为数据异常。
+   */
+  findSelf(profileId: string): Promise<PersonRow | null>;
 };
 
 /**
  * 首页两张统计卡的聚合结果，一次查询返回一行。
  *
- * 三个数字各自独立：`total_quantity` 是买了多少次，`active_redemption_count`
- * 是用掉多少次，两者相减才是「待使用」。相减放在 service 做，
- * 因为负值需要被夹到 0，而那是业务判断不是存储判断（E-05）。
+ * 待使用次数在 SQL 里逐项夹到 0 再相加：历史数据里某个项目可能超用
+ * （DATA_MODEL_V4 第 11.4 节），先汇总再相减会让它抵掉其他项目的余次。
+ * 这仍是派生值，不落库（ADR-013）。
  */
 export type DashboardTotalsRow = {
-  /** 全部套餐项目的购买次数之和 */
-  readonly total_quantity: number;
-  /** 全部有效核销数（只数 `status = 'active'`） */
-  readonly active_redemption_count: number;
+  /** 各项目 `MAX(0, quantity − 有效使用数)` 之和 */
+  readonly remaining_count: number;
   /** 全部套餐总价之和，整数分 */
   readonly total_amount_minor: number;
 };
@@ -537,10 +595,10 @@ export type DashboardRepository = {
   /** 首页两张统计卡所需的三个总数，一条 SQL 聚合完成。 */
   getTotals(profileId: string): Promise<DashboardTotalsRow>;
   /**
-   * 最近的有效核销，按核销日期倒序、同日按创建时间倒序，最多 `limit` 条。
+   * 最近的有效使用记录，按事件日期倒序、同日按创建时间倒序，最多 `limit` 条。
    *
-   * 已撤销的记录与已被永久删除的套餐下的记录都不会出现：前者由
-   * `status = 'active'` 排除，后者在删除时已连同记录一起物理消失（ADR-016）。
+   * 只返回仍关联着套餐项目的记录：卡片要能点进套餐详情。已撤销、原套餐已删除、
+   * 外部来源与暂不关联的记录都不出现；最近变美记录的完整展示属于 BT-0024。
    */
   listRecentRedemptions(profileId: string, limit: number): Promise<RecentRedemptionRow[]>;
 };
@@ -639,19 +697,23 @@ export type CatalogFavoriteRepository = {
 export type BackupRepository = {
   /** 读取档案本身；不存在时返回 null（由上层判定为读取失败）。 */
   findProfile(profileId: string): Promise<ProfileRow | null>;
+  /** 该档案的全部使用人（含已归档），按 `created_at ASC, id ASC`。 */
+  listPeople(profileId: string): Promise<PersonRow[]>;
   /** 该档案的全部机构（含已归档），按 `created_at ASC, id ASC`。 */
   listInstitutions(profileId: string): Promise<InstitutionRow[]>;
   /** 该档案的全部套餐，按 `created_at ASC, id ASC`。 */
   listPurchases(profileId: string): Promise<PurchaseRow[]>;
   /** 该档案全部套餐下的项目，按所属套餐顺序，其次 `created_at ASC, id ASC`。 */
   listPurchaseItems(profileId: string): Promise<PurchaseItemRow[]>;
+  /** 该档案的全部变美记录，按 `created_at ASC, id ASC`。 */
+  listBeautyEvents(profileId: string): Promise<BeautyEventRow[]>;
   /**
-   * 该档案全部项目下的核销记录，**含已撤销**，按 `created_at ASC, id ASC`。
+   * 该档案全部变美记录下的使用记录，**含已撤销**，按所属事件顺序，其次 `created_at ASC, id ASC`。
    *
-   * 归属经 `purchase_items → purchases.profile_id` 验证：这两张表自己没有
-   * `profile_id` 列，只能顺着外键往上走。
+   * 归属经 `beauty_events.profile_id` 验证：使用记录自己没有档案列，
+   * 也不一定关联套餐。
    */
-  listRedemptionRecords(profileId: string): Promise<RedemptionRecordRow[]>;
+  listUsageRecords(profileId: string): Promise<UsageRecordRow[]>;
   /** 该档案的全部心愿，按 `created_at ASC, id ASC`。 */
   listWishlistItems(profileId: string): Promise<WishlistItemRow[]>;
   /** 该档案的全部百科收藏，按 `created_at ASC, article_slug ASC`。 */
@@ -667,10 +729,12 @@ export type BackupRepository = {
  */
 export type RestoreRowCountsRow = {
   readonly profiles: number;
+  readonly people: number;
   readonly institutions: number;
   readonly purchases: number;
   readonly purchase_items: number;
-  readonly redemption_records: number;
+  readonly beauty_events: number;
+  readonly usage_records: number;
   readonly wishlist_items: number;
   readonly catalog_favorites: number;
 };
@@ -687,10 +751,21 @@ export type RestoreRowCountsRow = {
  */
 export type RestoreOrphanCountsRow = {
   readonly orphan_purchase_items: number;
-  readonly orphan_redemption_records: number;
+  /** 所属变美记录不存在的使用记录 */
+  readonly orphan_usage_records: number;
+  /** `purchase_item_id` 指向不存在项目的使用记录 */
+  readonly dangling_usage_items: number;
+  /** 使用人不存在的使用记录 */
+  readonly dangling_usage_people: number;
+  /** 购买人不存在的购买记录 */
+  readonly dangling_purchasers: number;
   readonly dangling_purchase_institutions: number;
-  readonly dangling_redemption_institutions: number;
+  readonly dangling_event_institutions: number;
   readonly dangling_wishlist_institutions: number;
+  /** 来源类型与所关联购买的类型不一致的使用记录（`package_item` 指向单次购买，或反之） */
+  readonly mismatched_usage_sources: number;
+  /** 档案里「自己」的条数；恢复之后必须恰好为 1 */
+  readonly self_count: number;
   /** 不属于目标档案的业务行数；覆盖式恢复之后必须为 0。 */
   readonly foreign_profile_rows: number;
 };
@@ -722,10 +797,12 @@ export type RestoreRepository = {
   deleteProfileData(profileId: string): Promise<void>;
   /** 写入档案行：已存在则更新，不存在则插入，始终只留这一条默认档案。 */
   upsertProfile(row: ProfileRow): Promise<void>;
+  insertPeople(rows: readonly PersonRow[]): Promise<void>;
   insertInstitutions(rows: readonly InstitutionRow[]): Promise<void>;
   insertPurchases(rows: readonly PurchaseRow[]): Promise<void>;
   insertPurchaseItems(rows: readonly PurchaseItemRow[]): Promise<void>;
-  insertRedemptionRecords(rows: readonly RedemptionRecordRow[]): Promise<void>;
+  insertBeautyEvents(rows: readonly BeautyEventRow[]): Promise<void>;
+  insertUsageRecords(rows: readonly UsageRecordRow[]): Promise<void>;
   insertWishlistItems(rows: readonly WishlistItemRow[]): Promise<void>;
   insertCatalogFavorites(rows: readonly CatalogFavoriteRow[]): Promise<void>;
   /** 全库行数，用于确认「备份里没有的数据确实已经不在库里了」。 */
@@ -738,6 +815,7 @@ export type RepositoryBundle = {
   readonly institutions: InstitutionRepository;
   readonly purchases: PurchaseRepository;
   readonly redemptions: RedemptionRepository;
+  readonly people: PeopleRepository;
   readonly dashboard: DashboardRepository;
   readonly wishlist: WishlistRepository;
   readonly catalogFavorites: CatalogFavoriteRepository;

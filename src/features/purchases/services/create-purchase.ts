@@ -14,6 +14,7 @@ import {
   normalizeCity,
   type PurchaseItemFields,
 } from './purchase-input-rules';
+import { resolveAllocatedAmount, resolveItemIdentity } from './purchase-item-columns';
 
 /**
  * 新增套餐用例。
@@ -75,9 +76,20 @@ export async function createPurchase(
     const institution = await resolveInstitution(repositories, input.institution, city, now);
     const purchaseId = createUuid();
 
+    // 购买人选择器属于 BT-0020 之后的表单，在那之前购买人一律是本档案的「自己」
+    // （PRD 第 5B.4 节默认值）。按 (profile_id, is_self = 1) 查，找不到说明库已损坏。
+    const self = await repositories.people.findSelf(DEFAULT_PROFILE_ID);
+    if (self === null) {
+      throw new Error('当前档案缺少「自己」');
+    }
+
     await repositories.purchases.insert({
       id: purchaseId,
       profile_id: DEFAULT_PROFILE_ID,
+      // 现有表单只录入套餐；「单次」购买只由「记录一次变美」生成（BT-0023）。
+      purchase_kind: 'package',
+      purchaser_person_id: self.id,
+      purchaser_name_snapshot: self.display_name,
       institution_id: institution?.id ?? null,
       // 快照在录入当时固化，机构日后改名也不会让旧记录跟着变（PRD-INST-005）。
       institution_name_snapshot: institution?.name ?? null,
@@ -93,13 +105,14 @@ export async function createPurchase(
       updated_at: now,
     });
 
+    // 表单仍是「单价 × 次数」与自由文本名称，换算规则集中在 purchase-item-columns。
     const items: PurchaseItemRow[] = input.items.map((item) => ({
       id: createUuid(),
       purchase_id: purchaseId,
       name: item.name.trim(),
-      category: item.category,
+      ...resolveItemIdentity(null, item),
       quantity: item.quantity,
-      unit_amount_minor: item.unitAmountMinor,
+      allocated_amount_minor: resolveAllocatedAmount(null, item),
       notes: item.notes,
       created_at: now,
       updated_at: now,

@@ -1,12 +1,14 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import type {
+  BeautyEventRow,
   CatalogFavoriteRow,
   InstitutionRow,
+  PersonRow,
   ProfileRow,
   PurchaseItemRow,
   PurchaseRow,
-  RedemptionRecordRow,
+  UsageRecordRow,
   WishlistItemRow,
 } from '../types';
 import type { BackupRepository } from './types';
@@ -22,9 +24,13 @@ import type { BackupRepository } from './types';
  * `*` 会让新列悄悄混进备份（或在旧格式里缺失）而没有任何编译期提示，
  * 显式列名则会在 `BackupRepository` 的返回类型上暴露出来。
  *
- * 归属校验：`purchase_items` 与 `redemption_records` 没有 `profile_id` 列，
- * 它们的归属必须顺着 `redemption_records → purchase_items → purchases.profile_id`
+ * 归属校验：`purchase_items` 与 `usage_records` 没有 `profile_id` 列，
+ * 前者顺着 `purchases.profile_id`、后者顺着 `beauty_events.profile_id`
  * 走 JOIN 验证，不能只靠上层先查出 ID 再拼接（任务书第六节）。
+ * 使用记录不一定关联套餐（原套餐已删除、外部来源），所以只能经事件判断归属。
+ *
+ * 每条 SELECT 的列顺序与建表顺序一致，导出 JSON 里每一行的键顺序因此固定
+ * （DATA_MODEL_V4 第 11.2 节）。
  *
  * 排序全部显式指定，且每个 ORDER BY 都以主键收尾。SQLite 对未指定顺序的查询
  * 不保证稳定返回，同一毫秒写入的两行在两次导出里可能换位，
@@ -41,10 +47,22 @@ export function createBackupRepository(db: SQLiteDatabase): BackupRepository {
       );
     },
 
+    async listPeople(profileId) {
+      return db.getAllAsync<PersonRow>(
+        `SELECT id, profile_id, display_name, normalized_name, is_self, status,
+                created_at, updated_at
+           FROM people
+          WHERE profile_id = ?
+          ORDER BY created_at ASC, id ASC`,
+        [profileId],
+      );
+    },
+
     async listInstitutions(profileId) {
       return db.getAllAsync<InstitutionRow>(
         `SELECT id, profile_id, name, normalized_name, city, notes,
-                is_archived, created_at, updated_at
+                is_archived, created_at, updated_at,
+                province_code, province_name, city_code
            FROM institutions
           WHERE profile_id = ?
           ORDER BY created_at ASC, id ASC`,
@@ -54,7 +72,8 @@ export function createBackupRepository(db: SQLiteDatabase): BackupRepository {
 
     async listPurchases(profileId) {
       return db.getAllAsync<PurchaseRow>(
-        `SELECT id, profile_id, institution_id, institution_name_snapshot, city_snapshot,
+        `SELECT id, profile_id, purchase_kind, purchaser_person_id, purchaser_name_snapshot,
+                institution_id, institution_name_snapshot, city_snapshot,
                 name, purchase_date, total_amount_minor, currency, expires_on, notes,
                 created_at, updated_at
            FROM purchases
@@ -68,8 +87,8 @@ export function createBackupRepository(db: SQLiteDatabase): BackupRepository {
       // 先按所属套餐的顺序（与 listPurchases 完全一致），再按项目自身的稳定顺序，
       // 这样备份里项目是跟着套餐成组出现的，人翻 JSON 时也读得下去。
       return db.getAllAsync<PurchaseItemRow>(
-        `SELECT i.id, i.purchase_id, i.name, i.category, i.quantity,
-                i.unit_amount_minor, i.notes, i.created_at, i.updated_at
+        `SELECT i.id, i.purchase_id, i.name, i.category_code, i.service_code, i.custom_name,
+                i.quantity, i.allocated_amount_minor, i.notes, i.created_at, i.updated_at
            FROM purchase_items i
            JOIN purchases p ON p.id = i.purchase_id
           WHERE p.profile_id = ?
@@ -78,18 +97,32 @@ export function createBackupRepository(db: SQLiteDatabase): BackupRepository {
       );
     },
 
-    async listRedemptionRecords(profileId) {
+    async listBeautyEvents(profileId) {
+      return db.getAllAsync<BeautyEventRow>(
+        `SELECT id, profile_id, occurred_on, institution_id, institution_name_snapshot,
+                province_code_snapshot, province_name_snapshot, city_code_snapshot, city_name_snapshot,
+                notes, created_at, updated_at
+           FROM beauty_events
+          WHERE profile_id = ?
+          ORDER BY created_at ASC, id ASC`,
+        [profileId],
+      );
+    },
+
+    async listUsageRecords(profileId) {
       // 有效与已撤销都要导出：撤销记录是纠错审计的一部分，不是垃圾数据
       // （PRD 第 7.2 节、ADR-016），所以这里不按 status 过滤。
-      return db.getAllAsync<RedemptionRecordRow>(
-        `SELECT r.id, r.purchase_item_id, r.institution_id, r.institution_name_snapshot,
-                r.city_snapshot, r.redeemed_on, r.status, r.notes,
-                r.created_at, r.updated_at, r.voided_at, r.void_reason
-           FROM redemption_records r
-           JOIN purchase_items i ON i.id = r.purchase_item_id
-           JOIN purchases p ON p.id = i.purchase_id
-          WHERE p.profile_id = ?
-          ORDER BY r.created_at ASC, r.id ASC`,
+      // 排序先跟着所属事件（与 listBeautyEvents 完全一致），再按记录自身。
+      return db.getAllAsync<UsageRecordRow>(
+        `SELECT u.id, u.event_id, u.source_kind, u.purchase_item_id, u.person_id,
+                u.person_name_snapshot, u.category_code_snapshot, u.service_code_snapshot,
+                u.service_name_snapshot, u.custom_name_snapshot, u.purchase_name_snapshot,
+                u.purchase_item_name_snapshot, u.status, u.voided_at, u.void_reason, u.notes,
+                u.created_at, u.updated_at
+           FROM usage_records u
+           JOIN beauty_events e ON e.id = u.event_id
+          WHERE e.profile_id = ?
+          ORDER BY e.created_at ASC, e.id ASC, u.created_at ASC, u.id ASC`,
         [profileId],
       );
     },

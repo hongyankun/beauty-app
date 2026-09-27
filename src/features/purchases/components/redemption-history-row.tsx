@@ -1,9 +1,16 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { Card } from '@/components/ui';
-import { BorderWidth, Colors, Layout, Radii, Spacing, TextStyles } from '@/theme';
-import { formatTimestampAsLocalMinute } from '@/utils/timestamp';
-import type { RedemptionHistoryEntry } from '../services/list-redemption-history';
+import { Card } from "@/components/ui";
+import {
+  BorderWidth,
+  Colors,
+  Layout,
+  Radii,
+  Spacing,
+  TextStyles,
+} from "@/theme";
+import { formatTimestampAsLocalMinute } from "@/utils/timestamp";
+import type { RedemptionHistoryEntry } from "../services/list-redemption-history";
 
 export type RedemptionHistoryRowProps = {
   entry: RedemptionHistoryEntry;
@@ -22,15 +29,28 @@ export type RedemptionHistoryRowProps = {
  * （UI_REFERENCE 第 11 章、ADR-016）。状态同时有文字，不靠颜色单独区分
  * （PRD-NFR-005）；标签用中性浅底与描边，不用大面积警示色。
  *
+ * 原套餐已删除的记录（ADR-021）没有可以进入的套餐详情：整条记录不是按钮，
+ * 套餐那一行用文字注明「原套餐已删除」，不只靠不可点击来表达。
+ *
  * 项目名称独占一行、可自由换行，日期与状态分别在别的行上，
  * 因此系统字体放到最大档也不会互相挤压截断（PRD-NFR-006）。
  */
-export function RedemptionHistoryRow({ entry, onPress }: RedemptionHistoryRowProps) {
-  const voidedAt = entry.voidedAt === null ? null : formatTimestampAsLocalMinute(entry.voidedAt);
+export function RedemptionHistoryRow({
+  entry,
+  onPress,
+}: RedemptionHistoryRowProps) {
+  const voidedAt =
+    entry.voidedAt === null
+      ? null
+      : formatTimestampAsLocalMinute(entry.voidedAt);
   // 城市为空时整段省略，不留「· 」这种空壳（任务书第七节）。
-  const place = entry.city === null ? entry.institutionLabel : `${entry.institutionLabel} · ${entry.city}`;
+  const place =
+    entry.city === null
+      ? entry.institutionLabel
+      : `${entry.institutionLabel} · ${entry.city}`;
 
   // 读屏把卡片里散开的几行合成一句话，整条记录是一个完整节点（任务书第十三节）。
+  const purchaseId = entry.purchaseId;
   const label = [
     entry.itemName,
     `属于套餐 ${entry.purchaseName}`,
@@ -38,39 +58,62 @@ export function RedemptionHistoryRow({ entry, onPress }: RedemptionHistoryRowPro
     entry.statusLabel,
     place,
     entry.voidReason === null ? null : `撤销原因 ${entry.voidReason}`,
-    '查看套餐详情',
+    purchaseId === null ? null : "查看套餐详情",
   ]
     .filter((part): part is string => part !== null)
-    .join('，');
+    .join("，");
+
+  const card = (
+    <Card style={styles.card}>
+      <View style={styles.header}>
+        <Text style={[styles.name, entry.isVoided ? styles.muted : null]}>
+          {entry.itemName}
+        </Text>
+        <View
+          style={[
+            styles.tag,
+            entry.isVoided ? styles.tagVoid : styles.tagActive,
+          ]}
+        >
+          <Text style={styles.tagLabel}>{entry.statusLabel}</Text>
+        </View>
+      </View>
+
+      <Text style={styles.meta}>{entry.purchaseName}</Text>
+      <Text style={styles.date}>{entry.redeemedOn}</Text>
+      <Text style={styles.meta}>{place}</Text>
+
+      {entry.notes === null ? null : (
+        <Text style={styles.meta}>{entry.notes}</Text>
+      )}
+
+      {/* 撤销时间解析不出来时整行不显示，界面上不出现 Invalid Date。 */}
+      {voidedAt === null ? null : (
+        <Text style={styles.meta}>撤销于 {voidedAt}</Text>
+      )}
+      {/* 原因是选填的，没填就不占一行，也不补一句编造的默认原因。 */}
+      {entry.voidReason === null ? null : (
+        <Text style={styles.meta}>撤销原因：{entry.voidReason}</Text>
+      )}
+    </Card>
+  );
+
+  if (purchaseId === null) {
+    return (
+      <View accessible accessibilityLabel={label}>
+        {card}
+      </View>
+    );
+  }
 
   return (
     <Pressable
-      onPress={() => onPress(entry.purchaseId)}
+      onPress={() => onPress(purchaseId)}
       accessibilityRole="button"
       accessibilityLabel={label}
       style={({ pressed }) => (pressed ? styles.pressed : null)}
     >
-      <Card style={styles.card}>
-        <View style={styles.header}>
-          <Text style={[styles.name, entry.isVoided ? styles.muted : null]}>{entry.itemName}</Text>
-          <View style={[styles.tag, entry.isVoided ? styles.tagVoid : styles.tagActive]}>
-            <Text style={styles.tagLabel}>{entry.statusLabel}</Text>
-          </View>
-        </View>
-
-        <Text style={styles.meta}>{entry.purchaseName}</Text>
-        <Text style={styles.date}>{entry.redeemedOn}</Text>
-        <Text style={styles.meta}>{place}</Text>
-
-        {entry.notes === null ? null : <Text style={styles.meta}>{entry.notes}</Text>}
-
-        {/* 撤销时间解析不出来时整行不显示，界面上不出现 Invalid Date。 */}
-        {voidedAt === null ? null : <Text style={styles.meta}>撤销于 {voidedAt}</Text>}
-        {/* 原因是选填的，没填就不占一行，也不补一句编造的默认原因。 */}
-        {entry.voidReason === null ? null : (
-          <Text style={styles.meta}>撤销原因：{entry.voidReason}</Text>
-        )}
-      </Card>
+      {card}
     </Pressable>
   );
 }
@@ -83,9 +126,9 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: Layout.iconGap,
   },
   name: {

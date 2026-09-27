@@ -65,7 +65,12 @@ export async function voidRedemption(
 
     // 3. 真正的防线是这句条件更新。上面的判断与它之间即便只隔一瞬，
     //    也只有 `WHERE status = 'active'` 能保证第二次撤销改不到任何一行。
-    const changed = await repositories.redemptions.voidById(input.redemptionId, now, reason);
+    const changed = await repositories.redemptions.voidById(
+      DEFAULT_PROFILE_ID,
+      input.redemptionId,
+      now,
+      reason,
+    );
 
     // 4. 行数必须正好是 1。0 表示这条记录在读与写之间已经被撤销，
     //    此时抛出使整个事务回滚，余次不会被恢复第二次（任务书第六节）。

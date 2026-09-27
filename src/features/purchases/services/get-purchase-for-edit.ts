@@ -4,6 +4,7 @@ import {
   type DataAccess,
   type PurchaseItemCategory,
 } from '@/db';
+import { displayUnitAmountMinor, toFormCategory } from './purchase-item-columns';
 
 /**
  * 编辑套餐的初值查询用例。
@@ -71,9 +72,9 @@ export async function getPurchaseForEdit(
     items: itemRows.map((row) => ({
       id: row.id,
       name: row.name,
-      category: row.category,
+      category: toFormCategory(row.category_code),
       quantity: row.quantity,
-      unitAmountMinor: row.unit_amount_minor,
+      unitAmountMinor: displayUnitAmountMinor(row.allocated_amount_minor, row.quantity),
       notes: row.notes,
       redeemedCount: row.active_redemption_count,
       hasRedemptionHistory: row.redemption_count > 0,

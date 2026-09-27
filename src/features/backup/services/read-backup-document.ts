@@ -1,15 +1,15 @@
 import { DEFAULT_PROFILE_ID, LATEST_SCHEMA_VERSION, type DataAccess } from '@/db';
 import { buildBackupDocument, type BackupDocument, type BackupSnapshot } from '../backup-document';
 import { BackupError, toBackupError } from './backup-error';
-import { validateBackupDocument } from './validate-backup-document';
+import { validateBackupDocumentV2 } from './validate-backup-document';
 
 /**
  * 读出一份完整备份。
  *
- * 七次查询全部包在**同一个事务**里（`runInTransaction` 在原生上用的是
- * 独占事务）。这不是谨慎过头：备份是七条独立查询拼起来的，用户完全可能在
+ * 九次查询全部包在**同一个事务**里（`runInTransaction` 在原生上用的是
+ * 独占事务）。这不是谨慎过头：备份是九条独立查询拼起来的，用户完全可能在
  * 第三条和第四条之间按下「撤销核销」或删掉一个套餐，那样导出的备份里会出现
- * 「核销引用了一个已经不存在的项目」这种恢复时必炸的组合。一个一致性快照
+ * 「使用记录引用了一个已经不存在的项目」这种恢复时必炸的组合。一个一致性快照
  * 把这种可能性直接排除（任务书第六节）。
  *
  * 事务里只有读，没有任何写：导出不修改数据库。
@@ -33,7 +33,7 @@ export async function readBackupDocument(
 
   // 自检不过就到此为止，绝不往下走到写文件与分享：一份缺东西的备份比没有备份
   // 更危险，用户会以为自己已经有了（任务书第五、十节）。
-  const validation = validateBackupDocument(document);
+  const validation = validateBackupDocumentV2(document);
   if (!validation.ok) {
     if (__DEV__) {
       console.error('[backup] 备份自检未通过', validation.issues);
@@ -54,19 +54,23 @@ async function readSnapshot(dataAccess: DataAccess, profileId: string): Promise<
 
       // 顺序读而不是 Promise.all：它们共用同一个事务连接，并发发出去也要排队，
       // 顺序写法还少一层「哪条语句失败了」的猜测。
+      const people = await repositories.backup.listPeople(profileId);
       const institutions = await repositories.backup.listInstitutions(profileId);
       const purchases = await repositories.backup.listPurchases(profileId);
       const purchaseItems = await repositories.backup.listPurchaseItems(profileId);
-      const redemptionRecords = await repositories.backup.listRedemptionRecords(profileId);
+      const beautyEvents = await repositories.backup.listBeautyEvents(profileId);
+      const usageRecords = await repositories.backup.listUsageRecords(profileId);
       const wishlistItems = await repositories.backup.listWishlistItems(profileId);
       const catalogFavorites = await repositories.backup.listCatalogFavorites(profileId);
 
       return {
         profile,
+        people,
         institutions,
         purchases,
         purchaseItems,
-        redemptionRecords,
+        beautyEvents,
+        usageRecords,
         wishlistItems,
         catalogFavorites,
       };

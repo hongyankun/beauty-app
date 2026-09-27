@@ -1,7 +1,9 @@
+import { findServiceByCode } from '@/data/service-catalog';
 import {
   DEFAULT_PROFILE_ID,
   type BusinessDate,
   type DataAccess,
+  type UsageSourceKind,
 } from '@/db';
 import { isBusinessDate } from '@/utils/business-date';
 import { createUuid } from '@/utils/uuid';
@@ -15,7 +17,17 @@ import { resolveInstitution, type InstitutionSelection } from './institution-sel
  * 因此「还能不能核销」这个判断必须和插入发生在**同一个独占事务**里：
  * 页面上读到的余次随时可能已经过期（另一处刚核销过、用户连点了两下、
  * 详情页停在后台很久），只有事务内重算的结果才算数（任务书第八、十一节）。
+ *
+ * schema v4 起一次核销写成**一条变美记录 + 一条使用记录**（ADR-020）：
+ * 使用人固定为本档案的「自己」，来源由套餐类型决定。「记录一次变美」的
+ * 完整表单属于 BT-0023，这里只保持现有快速核销的行为不变。
  */
+
+/** 核销来自哪种购买：套餐项目或单次购买（DATA_MODEL_V4 第 7 节）。 */
+const SOURCE_KIND_BY_PURCHASE_KIND = {
+  package: 'package_item',
+  single: 'single_purchase',
+} as const satisfies Record<string, UsageSourceKind>;
 
 export type CreateRedemptionInput = {
   readonly purchaseItemId: string;
@@ -71,26 +83,75 @@ export async function createRedemption(
     // 5. 创建或复用机构，与新增套餐共用同一套判重规则（ADR-014）。
     const institution = await resolveInstitution(repositories, input.institution, city, now);
 
-    // 6. 插入一条有效核销。快照写的是**这次核销当时**的机构与城市，
-    //    未填写机构时写 null 而不是空字符串（任务书第九节）。
-    const redemptionId = createUuid();
-    await repositories.redemptions.insert({
-      id: redemptionId,
-      purchase_item_id: item.id,
+    // 6. 使用人是本档案的「自己」，按 (profile_id, is_self = 1) 查，不猜 ID。
+    //    找不到说明库已损坏，宁可拒绝也不凭空造一个人。
+    const self = await repositories.people.findSelf(DEFAULT_PROFILE_ID);
+    if (self === null) {
+      throw new Error('当前档案缺少「自己」');
+    }
+
+    // 7. 变美记录的地点快照。城市文字仍取这次填的城市（没填时取机构的城市）；
+    //    省市代码只有在这段文字就是机构自己的城市时才从机构复制——
+    //    用户把城市改成了别处，机构上的代码就不再描述这一次（DATA_MODEL_V4 第 5B.9 节）。
+    const citySnapshot = city ?? institution?.city ?? null;
+    const copyLocation =
+      institution !== null && institution.province_code !== null && citySnapshot === institution.city;
+
+    const eventId = createUuid();
+    await repositories.redemptions.insertEvent({
+      id: eventId,
+      profile_id: DEFAULT_PROFILE_ID,
+      occurred_on: input.redeemedOn,
       institution_id: institution?.id ?? null,
       institution_name_snapshot: institution?.name ?? null,
-      city_snapshot: city ?? institution?.city ?? null,
-      redeemed_on: input.redeemedOn,
-      status: 'active',
-      notes,
+      province_code_snapshot: copyLocation ? institution.province_code : null,
+      province_name_snapshot: copyLocation ? institution.province_name : null,
+      city_code_snapshot: copyLocation ? institution.city_code : null,
+      city_name_snapshot: citySnapshot,
+      // 备注写在使用记录上，与 v3 → v4 迁移的口径一致。
+      notes: null,
       created_at: now,
       updated_at: now,
+    });
+
+    // 8. 使用记录的快照写的是**此刻**的项目与套餐名称，之后改名不回写（第 5B.5 节）。
+    //    与事件共用同一个 ID：一次快速核销正好一条事件一条使用，这与迁移的口径一致，
+    //    历史页的「撤销」也仍然只需要一个标识。
+    const serviceName =
+      item.service_code === null ? null : (findServiceByCode(item.service_code)?.displayName ?? item.name);
+    await repositories.redemptions.insertUsage({
+      id: eventId,
+      event_id: eventId,
+      source_kind: SOURCE_KIND_BY_PURCHASE_KIND[item.purchase_kind],
+      purchase_item_id: item.id,
+      person_id: self.id,
+      person_name_snapshot: self.display_name,
+      category_code_snapshot: item.category_code,
+      service_code_snapshot: item.service_code,
+      service_name_snapshot: serviceName,
+      custom_name_snapshot: item.service_code === null ? (item.custom_name ?? item.name) : item.custom_name,
+      purchase_name_snapshot: item.purchase_name,
+      purchase_item_name_snapshot: item.name,
+      status: 'active',
       // 作废字段只有撤销核销时才会写；active 记录必须留空（表级 CHECK 约束）。
       voided_at: null,
       void_reason: null,
+      notes,
+      created_at: now,
+      updated_at: now,
     });
 
-    // 7. 任一步抛出异常，整个事务回滚，不会留下半条核销。
+    // 9. 写入后自检。独占事务的连接没有开启外键，这里显式确认
+    //    这条事件恰好一条使用、项目的有效使用数没有超过购买次数。
+    const usageCount = await repositories.redemptions.countEventUsages(eventId);
+    const activeAfter = await repositories.redemptions.countActiveByItem(item.id);
+    if (usageCount !== 1 || activeAfter > item.quantity) {
+      throw new PurchaseServiceError('这个项目已经没有剩余次数，无法再记录核销');
+    }
+
+    const redemptionId = eventId;
+
+    // 10. 任一步抛出异常，整个事务回滚，不会留下半条核销。
     return redemptionId;
   });
 }

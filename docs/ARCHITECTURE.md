@@ -37,7 +37,7 @@
 ## 三、本地持久化（expo-sqlite）
 
 > 本节的**数据库基础与 repository / service 分层均已落地**：expo-sqlite 依赖、版本化迁移机制、
-> migration 1 至 migration 3 的表结构、数据库 Provider、repository 实现与 feature 内的 service 用例都已实现。
+> migration 1 至 migration 4 的表结构（migration 4 即 schema v4，见本节末「schema v4 与备份 v2」）、数据库 Provider、repository 实现与 feature 内的 service 用例都已实现。
 > 离线操作队列**尚未实现**（随 Phase 3 云同步一并设计）。决策依据见 [ADR-013](./DECISIONS.md#adr-013-本地持久化使用-expo-sqlite)。
 
 核心业务数据使用 **expo-sqlite**，不使用 AsyncStorage 或 JSON 文件作为主存储（轻量偏好设置除外）。第一阶段不引入 ORM。
@@ -63,7 +63,7 @@ SQLite           expo-sqlite，表、索引与迁移
 - 版本化迁移，禁止删库或删表重建升级。
 - 初始化时启用外键约束与 WAL。
 - 用户输入一律使用参数化查询，禁止字符串拼接 SQL。
-- 创建套餐及其项目、核销与撤销核销必须在事务内完成。
+- 创建套餐及其项目、核销（变美记录 + 使用记录）与撤销核销必须在事务内完成。
 - 业务主键使用 UUID 字符串，不使用自增 ID。
 - `remaining` 不落库，由 service 层派生。
 
@@ -74,10 +74,12 @@ SQLite           expo-sqlite，表、索引与迁移
 | `db/constants.ts` | 数据库文件名、默认档案 ID 与显示名、默认币种、项目分类与核销状态取值 |
 | `db/types.ts` | 各表的行类型与 `Migration` 类型，属性名与列名一致，不做驼峰转换 |
 | `db/migrations.ts` | 全部版本化迁移与其 SQL；`LATEST_SCHEMA_VERSION` 由迁移列表派生 |
+| `db/migration-004.ts` | migration 4（schema v4）：建表、搬运、事务内自查，最后才推进 `user_version` |
+| `db/legacy-mapping/` | v3 → v4 的纯映射函数（旧项目名称到项目目录、旧城市文字到行政区代码、旧核销到变美记录 + 使用记录），migration 4 与 v1 → v2 备份转换共用 |
 | `db/initialize-database.ts` | 唯一的初始化入口：开启 PRAGMA、读取 `user_version`、按序执行未执行的迁移 |
 | `db/run-in-transaction.ts` | 统一的事务边界（原生独占事务，Web 退化为普通事务），失败整体回滚 |
 | `db/repositories/types.ts` | repository **接口**与查询行类型。service 只依赖这一层，不依赖 SQLite |
-| `db/repositories/*-repository.ts` | 机构、套餐、核销、首页概览、心愿单、百科收藏、备份与恢复八组 SQLite 实现；全部参数化绑定，WHERE 一律带 `profile_id`。`backup-repository.ts` **只读**，每张表一个显式列名的查询，不使用 `SELECT *`，也不做任何派生计算；`restore-repository.ts` 是唯一会按档案整体删除并原样写回的实现，列名全为字面量，绝不拼接文件内容 |
+| `db/repositories/*-repository.ts` | 使用人、机构、套餐、核销（v4 起读写变美记录与使用记录的兼容适配器）、首页概览、心愿单、百科收藏、备份与恢复九组 SQLite 实现；全部参数化绑定，WHERE 一律带 `profile_id`。`backup-repository.ts` **只读**，每张表一个显式列名的查询，不使用 `SELECT *`，也不做任何派生计算；`restore-repository.ts` 是唯一会按档案整体删除并原样写回的实现，列名全为字面量，绝不拼接文件内容 |
 | `db/repositories/data-access.ts` | 把一组 repository 绑到一条连接上，并提供 `transaction()`；SQLite 泄漏到上层的最后一站 |
 | `db/index.ts` | 数据库层对外出口 |
 | `providers/database-provider.tsx` | 打开数据库、触发迁移，并呈现初始化的加载、失败与重试状态 |
@@ -90,7 +92,7 @@ SQLite           expo-sqlite，表、索引与迁移
 并在同一事务内推进 `user_version`。任一步失败即整体回滚、版本号不前进、错误向上抛出。
 已发布的迁移只读，改 schema 一律追加新版本。
 
-**第一版表结构（migration 1）**：
+**第一版表结构（migration 1）**（`purchases`、`purchase_items` 已由 migration 4 重建，`redemption_records` 已由 migration 4 删除，见本节末）：
 
 | 表 | 关键列 | 说明 |
 | --- | --- | --- |
@@ -129,8 +131,11 @@ migration 3 只创建新表与新索引，不触碰 migration 1、migration 2 �
 （[PRD 第 11.2 节](./PRODUCT_REQUIREMENTS.md#112-心愿单wishlistitem)）。
 
 **删除与作废在结构上的体现**：套餐是**永久删除**——没有 `deleted_at`，没有回收站，
-删除 `purchases` 一行即经外键级联清除其项目与核销记录，机构与档案不受影响；
-单条核销的纠错是**作废**而非删除，记录保留并写入 `voided_at` 与 `void_reason`，
+删除 `purchases` 一行即经外键级联清除其项目，机构、人与档案不受影响。schema v4 起，
+`usage_records.purchase_item_id` 为 `ON DELETE RESTRICT`：删除套餐的 service 先在同一事务内把
+引用它的使用记录改为「原套餐已删除」（清空 `purchase_item_id`、保留快照），再删除套餐，
+真实历史不随套餐消失（[ADR-021](./DECISIONS.md#adr-021-删除套餐不再删除真实历史使用记录保留历史快照)）；
+单条使用记录的纠错是**作废**而非删除，记录保留并写入 `voided_at` 与 `void_reason`，
 余次只统计 `active`（[ADR-016](./DECISIONS.md#adr-016-套餐永久删除核销记录使用作废机制)）。
 心愿同样是永久删除，但它不被任何表引用，删除只影响自己那一行。
 收藏与取消收藏也是真删真插：收藏不是业务记录，没有作废与审计的必要，取消收藏就是 `DELETE` 自己那一行。
@@ -153,9 +158,9 @@ migration 3 只创建新表与新索引，不触碰 migration 1、migration 2 �
 
 | 环节 | 职责 |
 | --- | --- |
-| `db/repositories/backup-repository.ts` | 七个**只读**查询，列名显式列出，一律按 `profile_id` 过滤（核销经 `purchase_items → purchases` 两跳归属）。不做派生计算 |
-| `backup-document.ts` | 纯函数 `buildBackupDocument`：把快照装进带 `format` / `formatVersion` / `databaseSchemaVersion` / `exportedAt` 的信封。时间与 schema 版本由调用方注入，便于验证 |
-| `services/read-backup-document.ts` | 七个查询放在**同一个事务**里，保证导出的是一个一致的时间点；组装后立即自校验 |
+| `db/repositories/backup-repository.ts` | 九个**只读**查询（备份 v2 的九个数组：档案、人、机构、套餐、套餐项目、变美记录、使用记录、心愿、收藏），列名显式列出，一律按 `profile_id` 过滤（套餐项目经 `purchases`、使用记录经 `beauty_events` 归属）。不做派生计算 |
+| `backup-document.ts` | 纯函数 `buildBackupDocument`：把快照装进带 `format` / `formatVersion` / `databaseSchemaVersion` / `exportedAt` 的信封。时间与 schema 版本由调用方注入，便于验证。导出只写 `formatVersion` 2 |
+| `services/read-backup-document.ts` | 九个查询放在**同一个事务**里，保证导出的是一个一致的时间点；组装后立即自校验 |
 | `services/validate-backup-document.ts` | 纯函数结构与不变量校验（字段类型、越档案归属、悬空外键、次数与金额下限、撤销状态一致性）。写出前与读回后各跑一次 |
 | `services/share-backup-file.ts` | 写入缓存目录下一个 UUID 子目录再交给系统分享面板，`finally` 里整目录删除。**唯一**接触 `expo-file-system` 与 `expo-sharing` 的文件 |
 
@@ -168,10 +173,11 @@ migration 3 只创建新表与新索引，不触碰 migration 1、migration 2 �
 | --- | --- |
 | `services/pick-backup-file.ts` | **唯一**接触 `expo-document-picker` 的文件。只拿用户主动选中的那一个；扩展名与 MIME 只是提示，不作为信任依据；绝对路径不进界面、不进日志 |
 | `services/backup-file-limits.ts` | 10 MiB 上限与 UTF-8 字节计数。选择器给的体积先挡一道，读入后按真实内容再量一次 |
-| `services/parse-backup-document.ts` | 体积 → `JSON.parse` → **复用导出侧同一个 validator** → 档案 ID 归一。不可信文本变成 `BackupDocument` 的唯一入口，失败按 `parse` / `validate` / `incompatible` 分类 |
+| `services/parse-backup-document.ts` | 体积 → `JSON.parse` → **复用导出侧同一个 validator** → 档案 ID 归一。不可信文本变成 `BackupDocument` 的唯一入口，失败按 `parse` / `validate` / `incompatible` 分类。v1 文件依次经过 v1 validator → 档案 ID 归一 → 纯函数转换 → v2 validator，全部在进入恢复事务之前 |
+| `services/convert-backup-v1-to-v2.ts` | 纯函数：把已校验的 v1 文档转换为 v2，调用 `db/legacy-mapping/` 中与 migration 4 相同的映射；不修改原文件 |
 | `backup-profile-mapping.ts` | 纯函数：把外来档案 ID 归到本机那个固定档案。**集中一处**，界面与 repository 不做临时映射 |
 | `db/repositories/restore-repository.ts` | 删除、写入与事务内自查的全部 SQL。列名全是代码里的字面量，值一律参数化绑定，每条写入检查影响行数 |
-| `services/restore-backup.ts` | 一个独占事务内：复查 schema 版本 → 按子表在前的顺序删除 → 按依赖顺序写回 → 自查行数与六类孤儿引用。任一步抛出即整体回滚 |
+| `services/restore-backup.ts` | 一个独占事务内：复查 schema 版本 → 按子表在前的顺序删除 → 按依赖顺序写回 → 自查行数、孤儿引用与「自己」恰好一个。任一步抛出即整体回滚 |
 
 **校验在事务外，写入在事务内**：持有独占锁的事务不做与数据库无关的判断。
 **不关闭外键检查，也不依赖它**——独占事务跑在新连接上，`PRAGMA foreign_keys` 不继承，
@@ -189,9 +195,10 @@ BEGIN 之后再开是静默无效的，因此删除顺序、写入顺序与写�
 repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 feature 的 `services/` 里；
 新增功能沿用同一分层，页面仍不得直接执行 SQL。
 
-### schema v4 与备份 v2（已批准，尚未实现）
+### schema v4 与备份 v2（数据层已实现，BT-0022）
 
-> 本小节描述 BT-0019D 冻结的**目标**，当前代码仍是 schema v3（`MIGRATIONS` 只有 migration 1 至 3）与备份 `formatVersion` 1。
+> 本小节描述的数据层已由 BT-0022 落地：`MIGRATIONS` 含 migration 1 至 4（migration 4 在 `src/db/migration-004.ts`），导出只写备份 `formatVersion` 2。
+> 变美记录表单、使用人管理、两步式套餐表单、省市与项目选择器接线等**界面仍未实现**，见 [ROADMAP](./ROADMAP.md)。
 > 表结构、约束、迁移步骤与备份格式的**规范来源**是 [DATA_MODEL_V4.md](./DATA_MODEL_V4.md)，本节只概括架构层面的边界。
 > 决策依据见 [ADR-020](./DECISIONS.md#adr-020-真实变美记录与套餐资产分离beautyevent--usagerecord套餐只是可选来源) 至 [ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录)。
 
@@ -216,7 +223,8 @@ Profile ─┬─ Person（含唯一的「自己」）
 
 - **快照与当前实体分工**：历史记录显示写入时的名称快照，永不因实体改名而回写；「当前是谁、当前在不在用」看实体本身（机构、人、目录条目）。套餐项目名称属于当前实体，「当时叫什么」看使用记录快照。心愿单仍然只显示机构当前名称。
 - **结构化地点只落在机构上**：`institutions` 增加 `province_code`、`province_name`、`city_code`，`city` 兼作显示名、旧数据原文与「其他地区」文字；变美记录从机构复制地点快照，套餐不另存代码（[ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录)）。机构以 `ALTER TABLE ADD COLUMN` 扩展而不是重建，避开 Web 端外键级联问题。
-- **剩余次数仍是派生值**：`quantity − 该项目有效的、来源为套餐或单次购买的使用记录数`，不落库。
+- **剩余次数仍是派生值**：`MAX(0, quantity − 该项目有效的、来源为套餐或单次购买的使用记录数)`，逐项计算，不落库；套餐与首页的待使用次数是各项目余次之和。
+- **历史数据兼容与新写入规则分开**：历史数据里有效使用数可能已经超过购买次数（历史超用）。迁移、v1 → v2 转换、v2 校验、导出、恢复与恢复自检都**原样接受**这类数据，不自动作废、不自动调高次数、不新增标记字段；**新增**有效使用（快速核销、未来的变美记录与来源修正）与调低购买次数必须阻止超用。规则见 [DATA_MODEL_V4 第 3、5.3、11.4 节](./DATA_MODEL_V4.md)。
 - **静态目录不进数据库**：行政区目录与项目分类目录是随 App 打包的版本化 TypeScript 数据（与百科正文同一思路），数据库与备份只保存代码与名称快照，读不懂的代码回退到快照显示。
 
 **行政区静态目录（BT-0019B1，已实现，待审阅，尚未接线）**
@@ -230,7 +238,7 @@ Profile ─┬─ Person（含唯一的「自己」）
 - 省级与地级是两个代码命名空间；除四个直辖市外不存在跨级同码。代码一旦发布不复用于别的地区。
 - 目录数组与条目在运行时冻结。选择结果的类型是结构化的，挡不住手写的伪造对象：写入之前（BT-0019B2 的服务层）必须调用 `isValidProvinceCitySelection` 做运行时校验（代码存在且配对、名称等于目录名称、自定义文字非空、「其他地区」不带任何代码），不能因为值来自选择器就跳过。
 - **严格校验的边界**：`isValidProvinceCitySelection` 按目录**当前**名称判定，只用于从当前选择器新选出的地点、用户主动修改地点后的写入前校验，以及确认标准城市属于所选省份。它**不用于** App 启动时重新校验库中已有地点、显示旧记录与机构 / 套餐 / 变美记录的历史地点快照、备份 v1 / v2 的通用结构校验、从备份恢复旧地点，也不用于因目录更新批量改写名称快照。目录更新、改名、停用代码或旧版本 App 存下了未知代码时，已有数据按保存时的名称快照照常显示，不删除、不清空、不拒绝加载、不自动改写；只有用户主动重新选择时才写入当前标准代码与名称。「已保存的值 → 选择器草稿」的适配（认识的代码按代码定位、名称不同不清空；未知代码保留并显示原文字、不猜测映射）由 BT-0019B2 设计并验收。
-- 运行时完全离线；目录不进数据库、不进备份。当前没有任何表单使用它，数据库仍为 schema v3、备份仍为 `formatVersion` 1；持久化由 BT-0022 与 BT-0019B2 完成。
+- 运行时完全离线；目录不进数据库、不进备份。schema v4 已为机构提供省市代码列（BT-0022），但当前没有任何表单使用选择器；接线与写入前校验由 BT-0019B2 完成。
 
 **项目两级静态目录（BT-0021A，已实现，待产品内容审核，尚未接线）**
 
@@ -242,14 +250,15 @@ Profile ─┬─ Person（含唯一的「自己」）
 - **别名与旧名称分开**：只有标准显示名称或经审核并冻结的 legacyExactNames，在归一化后精确且唯一命中时才允许自动映射；普通 aliases 只用于搜索，不参与迁移。映射另要求目标启用，不做包含、拼音、错别字或模糊匹配，命中不了就保持自定义。`displayName` 不含品牌；品牌名与市场俗称可以进 `aliases`，只有经产品审核后才能进 `legacyExactNames`。显示名称与旧名称的比较键全局唯一，迁移索引有一个稳定摘要（`serviceMigrationDigest`），增删别名不改变它。搜索只给候选，不自动选中。
 - **跨分类白名单**：旧项目默认只能在相同一级分类内，通过标准显示名称或经审核的 legacyExactNames 精确且唯一映射。只有冻结在 legacyCrossCategoryMappings 中的明确历史例外，才允许跨一级分类迁移。首版唯一例外是旧中胚层微针分类下的'射频微针'和'黄金微针'，迁移到光电类射频微针。白名单在 `legacy-cross-category.ts`（常量 `LEGACY_CROSS_CATEGORY_MAPPINGS`），匹配顺序为同分类精确匹配 → 白名单 → 自定义名称；完整性检查要求键唯一、目标在用且与旧分类不同、旧分类不是「其他」、旧名称已是目标条目的名称或旧名称。白名单用于旧数据库 migration 和 v1 备份升级转换，但不用于 v2 备份的常规恢复或历史快照重校验。迁移与 v1 → v2 转换调用同一个纯函数；白名单另有独立摘要（`legacyCrossCategoryDigest`）。
 - **严格校验的边界**：`isValidNewServiceSelection` 只用于从当前选择器新选出的项目、用户主动修改项目后的写入前校验（代码必须存在、在用、属于所选分类；自定义名称非空且已清洗；两者不能同时有值）。它**不用于**加载与显示已有记录、备份的通用结构校验、从备份恢复，也不用于因目录更新批量改写快照；已有数据里的停用或未知代码照常按快照显示，不拒绝、不清空、不自动改写。
-- 当前没有任何页面或服务使用它，数据库仍为 schema v3、备份仍为 `formatVersion` 1；持久化与迁移映射由 BT-0022 完成，选择器与接线由 BT-0021B 完成。
+- 迁移映射已由 BT-0022 落地：migration 4 与 v1 → v2 备份转换共用 `src/db/legacy-mapping/` 中的同一个纯函数（内部调用本目录的旧名称映射）。当前没有任何页面使用它，选择器与接线由 BT-0021B 完成。
 
 **schema 3 / 4 边界**
 
 - v4 由**一条**新迁移（version 4）完成，沿用现有迁移框架：全部建表、搬运数据、自查在**同一个事务**内，最后才设置 `user_version = 4`，任一步失败整体回滚，库保持 v3。
 - 重建顺序兼顾原生（独占事务、外键不生效）与 Web（外键开启、`DROP TABLE` 会级联）：先建 `_v4` 新表并搬运、自查，再按子表在前删除旧表，最后重命名与建索引。
-- `redemption_records` 在迁移中删除，不做双写、不留兼容视图。
-- 在 v4 上线之前，现有代码与 PRD 中的 v3 行为（核销、删除套餐级联等）继续有效。
+- `redemption_records` 在迁移中删除，不做双写、不留兼容视图。每条旧核销成为一条变美记录加一条使用记录，二者复用原核销 ID。
+- **现有界面的兼容层**（BT-0022）：v4 表单与页面尚未实现，旧界面通过兼容查询继续工作，页面代码不变。快速核销写入一条变美记录 + 一条来源为套餐的使用记录（使用人为「自己」）；核销历史与套餐详情读使用记录；撤销核销只改那一条使用记录；删除套餐把引用它的使用记录改为「原套餐已删除」并保留快照，不再级联删除。repository 层保留 `redemptions` 这个适配器名称，只是为了不改动旧界面的调用方。
+- 套餐表单在 BT-0019C 之前仍按「单次金额 × 次数」录入，保存时换算为 `allocated_amount_minor`；项目分类的合法取值由 service 层校验（v4 的 `category_code` 在数据库只约束非空）。
 
 **备份 1 / 2 边界**
 
@@ -273,7 +282,7 @@ Profile ─┬─ Person（含唯一的「自己」）
 - 套餐删除是二次确认后的永久删除并级联；单条核销只作废不物理删除（[ADR-016](./DECISIONS.md#adr-016-套餐永久删除核销记录使用作废机制)）
 - 云同步阶段的删除传播（tombstone 或等价机制）需另行设计，不得假设存在软删除列
 
-> **v4 目标（已批准，尚未实现）**：上面「Purchase、PurchaseItem 和 Redemption 分离」「项目分摊单价必填」「套餐删除并级联」三条描述的是当前 v3。v4 起，核销由 BeautyEvent + UsageRecord 取代；项目金额只保存分配总额 `allocated_amount_minor`（[ADR-023](./DECISIONS.md#adr-023-allocated_amount_minor-是套餐项目金额的唯一事实)）；删除套餐不再删除使用记录，改为保留快照并标记原套餐已删除（[ADR-021](./DECISIONS.md#adr-021-删除套餐不再删除真实历史使用记录保留历史快照)）；购买人与使用人以 Person 外键 + 名称快照保存（[ADR-022](./DECISIONS.md#adr-022-使用人作为独立实体以外键--名称快照保存)）；机构新增省市代码列，是唯一保存结构化地点的实体（[ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录)）。其余原则不变。
+> **schema v4（数据层已实现，BT-0022）**：上面「Purchase、PurchaseItem 和 Redemption 分离」「项目分摊单价必填」「套餐删除并级联」三条描述的是 v3 的原则。v4 起，核销由 BeautyEvent + UsageRecord 取代；项目金额只保存分配总额 `allocated_amount_minor`（[ADR-023](./DECISIONS.md#adr-023-allocated_amount_minor-是套餐项目金额的唯一事实)）；删除套餐不再删除使用记录，改为保留快照并标记原套餐已删除（[ADR-021](./DECISIONS.md#adr-021-删除套餐不再删除真实历史使用记录保留历史快照)）；购买人与使用人以 Person 外键 + 名称快照保存（[ADR-022](./DECISIONS.md#adr-022-使用人作为独立实体以外键--名称快照保存)）；机构新增省市代码列，是唯一保存结构化地点的实体（[ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录)）。其余原则不变。
 
 **为什么区分业务日期和时间戳**：核销发生在"哪一天"是业务事实，跨时区不应漂移；记录被创建在"哪一刻"是系统事实，必须可全局排序。两者语义不同，不能混用同一种表示。
 

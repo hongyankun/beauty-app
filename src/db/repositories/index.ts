@@ -13,6 +13,7 @@ export type {
   InstitutionRepository,
   InstitutionUpdate,
   InstitutionUsageRow,
+  PeopleRepository,
   PurchaseDeletionImpactRow,
   PurchaseItemContextRow,
   PurchaseItemDetailRow,

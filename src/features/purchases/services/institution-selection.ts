@@ -35,7 +35,7 @@ export type InstitutionSelection =
  * `city` 只在**新建**机构时作为它的城市写入；复用已有机构（含刚恢复的）时
  * 不会去改对方的名称与城市——主数据只在机构管理中心里改。
  *
- * 任何分支都不写 `purchases` 与 `redemption_records` 上的机构快照：
+ * 任何分支都不写 `purchases` 与 `beauty_events` 上的机构快照：
  * 那两份文本由调用方按「这一次购买/核销当时叫什么」单独落库。
  */
 export async function resolveInstitution(
@@ -85,6 +85,10 @@ export async function resolveInstitution(
     is_archived: 0,
     created_at: now,
     updated_at: now,
+    // 省市选择器尚未接到表单上（BT-0019B2），当场新增的机构只有城市文字。
+    province_code: null,
+    province_name: null,
+    city_code: null,
   };
   await repositories.institutions.insert(created);
   return created;

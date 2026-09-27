@@ -308,7 +308,7 @@ export function PurchaseDetailScreen() {
               accessibilityLabel={`删除套餐 ${detail.name}，删除后不可恢复`}
             />
             <Text style={styles.dangerHint}>
-              删除会连同这个套餐的项目与全部核销记录一起永久清除，无法恢复。机构不会被删除。
+              删除会永久清除这个套餐和它的项目，无法恢复。相关核销记录会保留，但不再关联这个套餐。机构不会被删除。
             </Text>
           </View>
         }
@@ -340,7 +340,7 @@ export function PurchaseDetailScreen() {
       <DangerConfirmModal
         visible={deleteImpact !== null}
         title="永久删除这个套餐？"
-        description="删除后不可恢复：App 内没有回收站，也没有恢复入口。这些记录将不再进入任何历史统计。机构不会被删除，以后仍可选用。"
+        description="套餐和它的项目将被永久删除，App 内没有回收站，也没有恢复入口。相关的核销记录会保留在核销历史里，但不再关联这个套餐。机构不会被删除，以后仍可选用。"
         facts={deleteImpact === null ? undefined : describeDeletionImpact(deleteImpact)}
         confirmLabel="永久删除"
         confirmingLabel="正在删除…"
@@ -371,8 +371,8 @@ function describeDeletionImpact(impact: PurchaseDeletionImpact): readonly Danger
   return [
     { label: '套餐', value: impact.purchaseName },
     { label: '将删除的项目', value: `${impact.itemCount} 个` },
-    // 已撤销的记录同样会被删除，数字里必须含它们，并且说明白。
-    { label: '将删除的核销记录', value: `${impact.redemptionCount} 条（含已撤销）` },
+    // 核销记录不删除（ADR-021），这里说明有多少条会保留但不再关联；含已撤销的记录。
+    { label: '保留但不再关联的核销记录', value: `${impact.redemptionCount} 条（含已撤销）` },
   ];
 }
 

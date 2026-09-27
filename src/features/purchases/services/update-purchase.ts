@@ -16,6 +16,7 @@ import {
   normalizeCity,
   type PurchaseItemFields,
 } from './purchase-input-rules';
+import { resolveAllocatedAmount, resolveItemIdentity } from './purchase-item-columns';
 
 /**
  * 编辑套餐用例。
@@ -28,9 +29,13 @@ import {
  * 因此所有判断在事务内**重新读库**之后再做一遍，读到的和写下去的处在同一个原子区间
  * （任务书第四节：两层校验）。
  *
- * 这里完全不写 `redemption_records`：改套餐的机构只改 `purchases` 自己那一行，
+ * 这里完全不写变美记录与使用记录：改套餐的机构只改 `purchases` 自己那一行，
  * 历史核销的机构与城市快照记录的是「那一次核销发生时的事实」，不随之变动
- * （PRD 第 5A.2 节、PRD-INST-005）。
+ * （PRD 第 5A.2 节、PRD-INST-005）。改项目名称同样不改写使用记录上的名称快照
+ * （PRD 第 5B.5 节）。
+ *
+ * 购买人与购买类型不在可写范围内：本轮没有购买人选择器（BT-0020 之后才有），
+ * 保存时原样保留库里的值。
  */
 
 /** 一行项目。`purchaseItemId` 为 null 表示这是本次新增的项目。 */
@@ -114,10 +119,18 @@ function assertChangesAreSafe(
 
     // 只看有效核销数：已撤销的核销不占用次数，撤销后那一次就该能重新填回去
     // （PRD 第 7.2 节、PRD-PUR-008、E-06）。
-    if (item.quantity < row.active_redemption_count) {
+    //
+    // 下限取「有效核销数」与「库里现在的次数」中较小的一个：历史数据可能已经超用
+    // （有效核销数 > 购买次数，DATA_MODEL_V4 第 11.4 节），这类项目允许保持或调高次数，
+    // 以便照常修改套餐的其他内容；但不得再调低，否则就是新增超用。
+    const minQuantity = Math.min(row.active_redemption_count, row.quantity);
+    if (item.quantity < minQuantity) {
       throw new PurchaseServiceError(
-        `「${row.name}」现在已经核销 ${row.active_redemption_count} 次，` +
-          `购买次数不能少于 ${row.active_redemption_count} 次`,
+        minQuantity === row.active_redemption_count
+          ? `「${row.name}」现在已经核销 ${row.active_redemption_count} 次，` +
+              `购买次数不能少于 ${minQuantity} 次`
+          : `「${row.name}」已经核销 ${row.active_redemption_count} 次，` +
+              `购买次数不能少于原来的 ${minQuantity} 次`,
       );
     }
   }
@@ -176,15 +189,18 @@ async function applyChanges(
     if (item.purchaseItemId === null) {
       continue;
     }
+    // `assertChangesAreSafe` 已经确认它在事务内读到的那一份里。
+    const stored = existing.get(item.purchaseItemId) ?? null;
     // 走 UPDATE 保留原 ID。全删再插会让这个项目的核销记录指向一个不存在的项目，
     // 等于把用户的核销历史一次性作废（任务书第三节）。
+    // 没改动的分配金额与目录代码原样保留，规则见 purchase-item-columns。
     const changed = await repositories.purchases.updateItem({
       id: item.purchaseItemId,
       purchase_id: input.purchaseId,
       name: item.name.trim(),
-      category: item.category,
+      ...resolveItemIdentity(stored, item),
       quantity: item.quantity,
-      unit_amount_minor: item.unitAmountMinor,
+      allocated_amount_minor: resolveAllocatedAmount(stored, item),
       notes: item.notes,
       updated_at: now,
     });
@@ -199,9 +215,9 @@ async function applyChanges(
       id: createUuid(),
       purchase_id: input.purchaseId,
       name: item.name.trim(),
-      category: item.category,
+      ...resolveItemIdentity(null, item),
       quantity: item.quantity,
-      unit_amount_minor: item.unitAmountMinor,
+      allocated_amount_minor: resolveAllocatedAmount(null, item),
       notes: item.notes,
       created_at: now,
       updated_at: now,
@@ -213,7 +229,7 @@ async function applyChanges(
   for (const removedId of input.removedItemIds) {
     const deleted = await repositories.purchases.deleteItem(input.purchaseId, removedId);
     if (deleted !== 1) {
-      // DELETE 语句自带 `NOT EXISTS (核销记录)` 条件，删不掉只有一个原因：
+      // DELETE 语句自带 `NOT EXISTS (使用记录)` 条件，删不掉只有一个原因：
       // 就在刚才这几毫秒里，这个项目有了核销记录。整体回滚，不留下半套修改。
       const name = existing.get(removedId)?.name ?? '这个项目';
       throw new PurchaseServiceError(

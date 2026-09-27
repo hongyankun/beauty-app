@@ -3,12 +3,18 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Card, Chip, ChipRow, Icon, TextField } from '@/components/ui';
 import { Colors, Layout, Spacing, TextStyles } from '@/theme';
 import { PURCHASE_ITEM_CATEGORY_OPTIONS } from '../categories';
-import type { PurchaseItemDraft, PurchaseItemErrors } from '../purchase-draft';
+import {
+  quantityFloorMessage,
+  type PurchaseItemDraft,
+  type PurchaseItemErrors,
+} from '../purchase-draft';
 
 /** 编辑既有项目时的附加事实。新增流程不传。 */
 export type PurchaseItemEditorContext = {
   /** 已核销次数，只统计有效核销 */
   readonly redeemedCount: number;
+  /** 最小可填次数；历史超用的项目为它现在的次数，否则等于 `redeemedCount` */
+  readonly minQuantity: number;
   /** 是否有过任何核销记录，含已撤销 */
   readonly hasRedemptionHistory: boolean;
 };
@@ -50,7 +56,7 @@ export function PurchaseItemEditor({
       ? undefined
       : context.redeemedCount === 0
         ? '还没有核销过'
-        : `已核销 ${context.redeemedCount} 次，不能少于 ${context.redeemedCount}`;
+        : quantityFloorMessage(context);
 
   return (
     <Card style={styles.card}>

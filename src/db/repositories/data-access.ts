@@ -5,6 +5,7 @@ import { createBackupRepository } from './backup-repository';
 import { createCatalogFavoriteRepository } from './catalog-favorite-repository';
 import { createDashboardRepository } from './dashboard-repository';
 import { createInstitutionRepository } from './institution-repository';
+import { createPeopleRepository } from './people-repository';
 import { createPurchaseRepository } from './purchase-repository';
 import { createRedemptionRepository } from './redemption-repository';
 import { createRestoreRepository } from './restore-repository';
@@ -17,6 +18,7 @@ function createRepositoryBundle(db: SQLiteDatabase): RepositoryBundle {
     institutions: createInstitutionRepository(db),
     purchases: createPurchaseRepository(db),
     redemptions: createRedemptionRepository(db),
+    people: createPeopleRepository(db),
     dashboard: createDashboardRepository(db),
     wishlist: createWishlistRepository(db),
     catalogFavorites: createCatalogFavoriteRepository(db),

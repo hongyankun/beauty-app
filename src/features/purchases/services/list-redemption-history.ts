@@ -35,13 +35,28 @@ const STATUS_FILTERS: Readonly<Record<RedemptionHistoryFilter, RedemptionStatusF
 /** 机构快照为空时的占位文案。核销当时没记机构是常态，不是错误（任务书第七节）。 */
 const NO_INSTITUTION = '未填写机构';
 
+/**
+ * 套餐那一行的文字。
+ *
+ * 套餐被删除后使用记录仍然保留（ADR-021），显示当时的套餐名称快照并注明原套餐已删除。
+ * 外部来源与暂不关联的记录目前界面上还建不出来（BT-0023），但可能随备份恢复进来，
+ * 这里一并给出能读懂的文字，不显示技术取值（PRD-RED-010）。
+ */
+function describePurchase(sourceKind: string, purchaseName: string | null): string {
+  if (sourceKind === 'deleted_package') {
+    return purchaseName === null ? '原套餐已删除' : `${purchaseName}（原套餐已删除）`;
+  }
+  return purchaseName ?? '未关联套餐';
+}
+
 export type RedemptionHistoryEntry = {
   readonly id: string;
-  /** 所属套餐，点击整条记录时跳到它的详情页 */
-  readonly purchaseId: string;
-  readonly purchaseItemId: string;
+  /** 所属套餐，点击整条记录时跳到它的详情页；原套餐已删除或未关联套餐时为 null，不可点击 */
+  readonly purchaseId: string | null;
+  readonly purchaseItemId: string | null;
   /** 项目名称，卡片主标题 */
   readonly itemName: string;
+  /** 套餐那一行的文字，已含「原套餐已删除」等说明，可直接渲染 */
   readonly purchaseName: string;
   readonly redeemedOn: BusinessDate;
   /** 是否已撤销。页面据此切换标签与灰度，不去读数据库状态值 */
@@ -84,7 +99,7 @@ export type RedemptionHistoryResult = {
  * 已经是稳定顺序，在 JS 里二次排序只会多一次 O(n log n) 且容易写出不一致的比较。
  *
  * 其他档案的数据读不到：`profile_id` 条件在 SQL 里（ADR-015）。
- * 已被永久删除的套餐也读不到：那些记录已随套餐物理消失（ADR-016）。
+ * 套餐被永久删除后，它的使用记录仍然在这里，标注原套餐已删除（ADR-021）。
  */
 export async function listRedemptionHistory(
   dataAccess: DataAccess,
@@ -105,8 +120,9 @@ export async function listRedemptionHistory(
       id: row.id,
       purchaseId: row.purchase_id,
       purchaseItemId: row.purchase_item_id,
-      itemName: row.item_name,
-      purchaseName: row.purchase_name,
+      // 项目名称取使用记录上的快照，三份快照依次兜底，按 CHECK 至少有一份非空。
+      itemName: row.item_name ?? '未命名项目',
+      purchaseName: describePurchase(row.source_kind, row.purchase_name),
       redeemedOn: row.redeemed_on,
       isVoided,
       statusLabel: isVoided ? '已撤销' : '有效',

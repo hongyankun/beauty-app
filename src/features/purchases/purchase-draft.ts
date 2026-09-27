@@ -84,16 +84,34 @@ export type PurchaseDraftValidation =
   | { readonly ok: true; readonly input: PurchaseDraftInput }
   | { readonly ok: false; readonly errors: PurchaseFormErrors };
 
+/** 一个既有项目的购买次数下限及其依据。 */
+export type QuantityFloor = {
+  /** 最小可填次数：`min(有效核销次数, 库里现在的次数)` */
+  readonly minQuantity: number;
+  /** 当前有效核销次数，只用于提示 */
+  readonly redeemedCount: number;
+};
+
 /** 校验时的附加约束，新增流程不需要传。 */
 export type PurchaseDraftValidationOptions = {
   /**
-   * 以项目草稿的 `key` 为索引的购买次数下限，即该项目当前的有效核销次数。
+   * 以项目草稿的 `key` 为索引的购买次数下限。
+   *
+   * 通常就是有效核销次数；历史超用的项目（有效核销数 > 购买次数，DATA_MODEL_V4
+   * 第 11.4 节）下限是它现在的次数：可以保持或调高，不能再调低。
    *
    * 这是两层次数安全校验的第一层，作用是让用户在按下保存**之前**就看到原因
    * （PRD-PUR-008、E-06）。第二层在 `updatePurchase` 的事务里，那一层才是最终裁决。
    */
-  readonly minQuantityByKey?: Readonly<Record<string, number>>;
+  readonly minQuantityByKey?: Readonly<Record<string, QuantityFloor>>;
 };
+
+/** 次数下限的提示；同时给出已核销次数与最小可填值（E-06）。 */
+export function quantityFloorMessage(floor: QuantityFloor): string {
+  return floor.minQuantity === floor.redeemedCount
+    ? `已核销 ${floor.redeemedCount} 次，购买次数不能少于 ${floor.minQuantity}`
+    : `已核销 ${floor.redeemedCount} 次，购买次数不能少于原来的 ${floor.minQuantity}`;
+}
 
 export function createEmptyItemDraft(key: string): PurchaseItemDraft {
   return {
@@ -277,9 +295,9 @@ export function validatePurchaseDraft(
     } else {
       // 次数不得少于已核销次数。只有编辑流程会传这个下限；
       // 提示里同时给出当前已核销次数与最小可填值，用户不用自己推算（E-06）。
-      const minQuantity = options.minQuantityByKey?.[item.key];
-      if (minQuantity !== undefined && quantity.quantity < minQuantity) {
-        errors.quantity = `已核销 ${minQuantity} 次，购买次数不能少于 ${minQuantity}`;
+      const floor = options.minQuantityByKey?.[item.key];
+      if (floor !== undefined && quantity.quantity < floor.minQuantity) {
+        errors.quantity = quantityFloorMessage(floor);
       }
     }
 

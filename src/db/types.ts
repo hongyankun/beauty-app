@@ -1,6 +1,12 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import type { PURCHASE_ITEM_CATEGORIES, REDEMPTION_STATUSES } from './constants';
+import type {
+  PERSON_STATUSES,
+  PURCHASE_ITEM_CATEGORIES,
+  PURCHASE_KINDS,
+  USAGE_SOURCE_KINDS,
+  USAGE_STATUSES,
+} from './constants';
 
 /**
  * 数据库行类型。
@@ -21,7 +27,13 @@ export type BusinessDate = string;
 
 export type PurchaseItemCategory = (typeof PURCHASE_ITEM_CATEGORIES)[number];
 
-export type RedemptionStatus = (typeof REDEMPTION_STATUSES)[number];
+export type PurchaseKind = (typeof PURCHASE_KINDS)[number];
+
+export type PersonStatus = (typeof PERSON_STATUSES)[number];
+
+export type UsageStatus = (typeof USAGE_STATUSES)[number];
+
+export type UsageSourceKind = (typeof USAGE_SOURCE_KINDS)[number];
 
 export type ProfileRow = {
   id: string;
@@ -37,9 +49,30 @@ export type InstitutionRow = {
   name: string;
   /** 去除首尾空格并转小写后的名称，用于搜索与排序；不唯一，同名机构允许并存（ADR-014）。 */
   normalized_name: string;
+  /** 城市显示文字：标准城市名、迁移前的原始文字，或「暂未收录」时用户填写的文字。 */
   city: string | null;
   notes: string | null;
   is_archived: SqliteBoolean;
+  created_at: UtcTimestamp;
+  updated_at: UtcTimestamp;
+  /**
+   * 结构化地点（schema v4，DATA_MODEL_V4 第 4.7 节）。只允许三种组合：
+   * 全空；省代码 + 省名称；省代码 + 省名称 + 市代码。任一代码非空时 `city` 必须非空白。
+   */
+  province_code: string | null;
+  province_name: string | null;
+  city_code: string | null;
+};
+
+/** 同一档案下被记录的人。「自己」每个档案恰好一个，不能归档、删除或改名。 */
+export type PersonRow = {
+  id: string;
+  profile_id: string;
+  display_name: string;
+  /** 与机构判重相同的归一化结果，同一档案内唯一。 */
+  normalized_name: string;
+  is_self: SqliteBoolean;
+  status: PersonStatus;
   created_at: UtcTimestamp;
   updated_at: UtcTimestamp;
 };
@@ -47,6 +80,10 @@ export type InstitutionRow = {
 export type PurchaseRow = {
   id: string;
   profile_id: string;
+  purchase_kind: PurchaseKind;
+  purchaser_person_id: string;
+  /** 录入当时购买人的名称快照，改名不回写。 */
+  purchaser_name_snapshot: string;
   institution_id: string | null;
   /** 录入当时的机构名称快照，机构改名后旧记录仍显示原名（PRD-INST-005）。 */
   institution_name_snapshot: string | null;
@@ -66,34 +103,63 @@ export type PurchaseRow = {
 export type PurchaseItemRow = {
   id: string;
   purchase_id: string;
+  /** 套餐项目当前的用户可见名称，不是历史快照。 */
   name: string;
-  category: PurchaseItemCategory;
+  /** 项目目录一级分类代码。数据库不枚举取值，由 service 校验（ADR-024）。 */
+  category_code: string;
+  /** 目录二级项目代码；为空表示自定义项目。与 `custom_name` 至少有一个。 */
+  service_code: string | null;
+  custom_name: string | null;
   /** 购买次数，必须大于 0。 */
   quantity: number;
   /**
-   * 分摊单价，整数分，必填；0 表示赠送项目。
-   * 项目分摊总额 = `unit_amount_minor × quantity`，由上层派生，不落库。
+   * 分配到这个项目的总金额，整数分，0 表示赠送（ADR-023）。
+   * 单次均价 = 分配金额 ÷ 次数，只用于展示，不落库。
    */
-  unit_amount_minor: number;
+  allocated_amount_minor: number;
   notes: string | null;
   created_at: UtcTimestamp;
   updated_at: UtcTimestamp;
 };
 
-export type RedemptionRecordRow = {
+/** 一次真实发生的到店。没有使用人、金额与余次。 */
+export type BeautyEventRow = {
   id: string;
-  purchase_item_id: string;
+  profile_id: string;
+  occurred_on: BusinessDate;
   institution_id: string | null;
   institution_name_snapshot: string | null;
-  city_snapshot: string | null;
-  redeemed_on: BusinessDate;
-  status: RedemptionStatus;
+  province_code_snapshot: string | null;
+  province_name_snapshot: string | null;
+  city_code_snapshot: string | null;
+  city_name_snapshot: string | null;
   notes: string | null;
   created_at: UtcTimestamp;
   updated_at: UtcTimestamp;
+};
+
+/** 一次项目使用。一行 = 一次，没有数量列。 */
+export type UsageRecordRow = {
+  id: string;
+  event_id: string;
+  source_kind: UsageSourceKind;
+  /** 来源为套餐项目或单次购买时必填，其余来源必须为空（表级 CHECK 保证）。 */
+  purchase_item_id: string | null;
+  person_id: string;
+  person_name_snapshot: string;
+  category_code_snapshot: string;
+  service_code_snapshot: string | null;
+  service_name_snapshot: string | null;
+  custom_name_snapshot: string | null;
+  purchase_name_snapshot: string | null;
+  purchase_item_name_snapshot: string | null;
+  status: UsageStatus;
   /** status 为 void 时必填，active 时必须为空（表级 CHECK 约束保证）。 */
   voided_at: UtcTimestamp | null;
   void_reason: string | null;
+  notes: string | null;
+  created_at: UtcTimestamp;
+  updated_at: UtcTimestamp;
 };
 
 /**

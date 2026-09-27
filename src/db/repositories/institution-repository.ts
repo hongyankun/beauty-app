@@ -17,21 +17,26 @@ import type {
 
 /** 机构主数据的全部列，`findById` 与 `findByNormalizedName` 共用。 */
 const INSTITUTION_COLUMNS =
-  'id, profile_id, name, normalized_name, city, notes, is_archived, created_at, updated_at';
+  'id, profile_id, name, normalized_name, city, notes, is_archived, created_at, updated_at, province_code, province_name, city_code';
 
 /**
  * 机构主数据 + 两个关联计数。
  *
  * 计数用**相关子查询**而不是 JOIN + GROUP BY：一个机构同时关联 3 个套餐和
- * 5 条核销时，两张表 JOIN 在一起会得到 15 行，两个 COUNT 互相放大成 15 和 15。
+ * 5 条使用记录时，两张表 JOIN 在一起会得到 15 行，两个 COUNT 互相放大成 15 和 15。
  * 子查询各自独立求值，不会互相污染。
  *
- * 核销计数不带 `status` 条件：已撤销的核销同样是历史（任务书第四节）。
+ * schema v4 起「关联核销数」数的是在这家机构发生的变美记录下的使用记录
+ * （经 `beauty_events.institution_id`），不带 `status` 条件：已撤销的同样是历史。
  * 两个计数都只认外键，不碰名称快照。
  */
 const USAGE_COLUMNS = `i.id, i.name, i.city, i.notes, i.is_archived, i.created_at, i.updated_at,
+          i.province_code, i.province_name, i.city_code,
           (SELECT COUNT(*) FROM purchases p WHERE p.institution_id = i.id) AS purchase_count,
-          (SELECT COUNT(*) FROM redemption_records r WHERE r.institution_id = i.id) AS redemption_count`;
+          (SELECT COUNT(*)
+             FROM usage_records u
+             JOIN beauty_events e ON e.id = u.event_id
+            WHERE e.institution_id = i.id) AS redemption_count`;
 
 export function createInstitutionRepository(db: SQLiteDatabase): InstitutionRepository {
   return {
@@ -108,16 +113,20 @@ export function createInstitutionRepository(db: SQLiteDatabase): InstitutionRepo
     async updateDetails(row) {
       // WHERE 同时带 id 与 profile_id：跨档案的写入连语句层面都不成立。
       // 不写 profile_id、created_at、is_archived，也完全不触碰
-      // purchases 与 redemption_records 上的机构与城市快照（PRD-INST-005）。
+      // purchases 与 beauty_events 上的机构与地点快照（PRD-INST-005）。
       const result = await db.runAsync(
         `UPDATE institutions
-            SET name = ?, normalized_name = ?, city = ?, notes = ?, updated_at = ?
+            SET name = ?, normalized_name = ?, city = ?, notes = ?,
+                province_code = ?, province_name = ?, city_code = ?, updated_at = ?
           WHERE id = ? AND profile_id = ?`,
         [
           row.name,
           row.normalized_name,
           row.city,
           row.notes,
+          row.province_code,
+          row.province_name,
+          row.city_code,
           row.updated_at,
           row.id,
           row.profile_id,
@@ -141,8 +150,9 @@ export function createInstitutionRepository(db: SQLiteDatabase): InstitutionRepo
     async insert(row) {
       await db.runAsync(
         `INSERT INTO institutions
-           (id, profile_id, name, normalized_name, city, notes, is_archived, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, profile_id, name, normalized_name, city, notes, is_archived, created_at, updated_at,
+            province_code, province_name, city_code)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           row.id,
           row.profile_id,
@@ -153,6 +163,9 @@ export function createInstitutionRepository(db: SQLiteDatabase): InstitutionRepo
           row.is_archived,
           row.created_at,
           row.updated_at,
+          row.province_code,
+          row.province_name,
+          row.city_code,
         ],
       );
     },

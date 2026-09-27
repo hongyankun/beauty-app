@@ -25,7 +25,7 @@ export type PurchaseSummary = {
   readonly totalQuantity: number;
   /** 有效核销数（只算 status = active 的记录） */
   readonly redeemedCount: number;
-  /** 派生值：总购买次数 − 有效核销数 */
+  /** 派生值：各项目 max(0, 购买次数 − 有效核销数) 之和 */
   readonly remaining: number;
 };
 
@@ -49,9 +49,9 @@ export async function listPurchases(dataAccess: DataAccess): Promise<PurchaseSum
     itemCount: row.item_count,
     totalQuantity: row.total_quantity,
     redeemedCount: row.active_redemption_count,
-    // 理论上不会为负；真为负说明数据异常，界面上仍然只展示 0，
-    // 不把负数余次呈现给用户（E-05：不得允许负数余次）。
-    remaining: Math.max(0, row.total_quantity - row.active_redemption_count),
+    // 逐项夹到 0 再相加（SQL 里完成）：历史超用的项目只显示 0，
+    // 不抵扣同一套餐其他项目的余次（DATA_MODEL_V4 第 11.4 节、E-05）。
+    remaining: row.remaining_count,
   }));
 }
 

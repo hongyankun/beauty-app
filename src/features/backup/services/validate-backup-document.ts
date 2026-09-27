@@ -1,6 +1,21 @@
-import { LATEST_SCHEMA_VERSION, PURCHASE_ITEM_CATEGORIES, REDEMPTION_STATUSES } from '@/db';
+import {
+  LATEST_SCHEMA_VERSION,
+  PERSON_STATUSES,
+  PURCHASE_ITEM_CATEGORIES,
+  PURCHASE_KINDS,
+  REDEMPTION_STATUSES,
+  USAGE_SOURCE_KINDS,
+  USAGE_STATUSES,
+} from '@/db';
 import { compareBusinessDates, isBusinessDate } from '@/utils/business-date';
-import { BACKUP_FORMAT, BACKUP_FORMAT_VERSION, type BackupDocument } from '../backup-document';
+import {
+  BACKUP_FORMAT,
+  BACKUP_FORMAT_VERSION,
+  BACKUP_V2_SCHEMA_VERSION,
+  LEGACY_BACKUP_FORMAT_VERSION,
+  type BackupDocument,
+  type BackupDocumentV1,
+} from '../backup-document';
 
 /**
  * 校验失败的性质。
@@ -23,24 +38,28 @@ export type BackupValidationFailureKind = 'notBackup' | 'invalid' | 'incompatibl
  * `issues` 是**技术性**说明，只用于 `__DEV__` 日志与自动化验证，
  * 永远不会展示给用户：用户看到的是第九节规定的那几句中文（任务书第九节）。
  * 它只描述「哪个位置的什么规则没过」，不回显字段取值，因此不会把用户的
- * 备注、机构名称泄进日志。
+ * 备注、机构名称、人名泄进日志。
  */
-export type BackupValidationResult =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly kind: BackupValidationFailureKind;
-      readonly issues: readonly string[];
-    };
+export type BackupValidationFailure = {
+  readonly ok: false;
+  readonly kind: BackupValidationFailureKind;
+  readonly issues: readonly string[];
+};
 
-/** 本版本能够识别的格式版本。往后新增版本时在这里登记，不是随便比大小。 */
-const SUPPORTED_FORMAT_VERSIONS: readonly number[] = [BACKUP_FORMAT_VERSION];
+export type BackupValidationResult = { readonly ok: true } | BackupValidationFailure;
+
+/**
+ * 分派校验的结果：通过时带上格式版本，调用方据此决定是否先把 v1 转换为 v2。
+ */
+export type BackupEnvelopeValidationResult =
+  | { readonly ok: true; readonly formatVersion: 1 | 2 }
+  | BackupValidationFailure;
 
 /** 问题列表的上限。一份结构彻底不对的文件会产生成千上万条，记那么多没有意义。 */
 const MAX_ISSUES = 20;
 
-/** 备份文档允许出现的顶层键。多一个都不接受，见 `checkUnknownKeys`。 */
-const DOCUMENT_KEYS: readonly string[] = [
+/** 格式 1 允许出现的顶层键。多一个都不接受，见 `checkUnknownKeys`。 */
+const DOCUMENT_KEYS_V1: readonly string[] = [
   'format',
   'formatVersion',
   'exportedAt',
@@ -54,17 +73,38 @@ const DOCUMENT_KEYS: readonly string[] = [
   'catalogFavorites',
 ];
 
+/** 格式 2 允许出现的顶层键（DATA_MODEL_V4 第 11.2 节）。 */
+const DOCUMENT_KEYS_V2: readonly string[] = [
+  'format',
+  'formatVersion',
+  'exportedAt',
+  'databaseSchemaVersion',
+  'profile',
+  'people',
+  'institutions',
+  'purchases',
+  'purchaseItems',
+  'beautyEvents',
+  'usageRecords',
+  'wishlistItems',
+  'catalogFavorites',
+];
+
 /** 币种是定长三字母代码（表级 CHECK：`length(currency) = 3`）。 */
 const CURRENCY_LENGTH = 3;
 
 type FieldKind =
-  /** 非空字符串，用于主键与外键。 */
+  /** 非空字符串，用于主键、外键与必填的目录代码。 */
   | 'id'
   /** 去除首尾空格后非空的文本，对应表上的 `length(trim(...)) > 0`。 */
   | 'name'
   | 'currency'
   | 'text'
   | 'nullableText'
+  /** `null` 或非空字符串，对应 `x IS NULL OR length(x) > 0`；用于目录代码。 */
+  | 'nullableCode'
+  /** `null` 或去除首尾空格后非空的文本。 */
+  | 'nullableName'
   | 'integer'
   | 'nullableInteger'
   /** SQLite 里的布尔：只能是 0 或 1。 */
@@ -75,7 +115,11 @@ type FieldKind =
   | 'nullableTimestamp'
   | 'category'
   | 'nullableCategory'
-  | 'status';
+  | 'redemptionStatus'
+  | 'purchaseKind'
+  | 'personStatus'
+  | 'sourceKind'
+  | 'usageStatus';
 
 type RowSpec = Readonly<Record<string, FieldKind>>;
 
@@ -85,61 +129,6 @@ const PROFILE_SPEC: RowSpec = {
   is_default: 'flag',
   created_at: 'timestamp',
   updated_at: 'timestamp',
-};
-
-const INSTITUTION_SPEC: RowSpec = {
-  id: 'id',
-  profile_id: 'id',
-  name: 'name',
-  normalized_name: 'name',
-  city: 'nullableText',
-  notes: 'nullableText',
-  is_archived: 'flag',
-  created_at: 'timestamp',
-  updated_at: 'timestamp',
-};
-
-const PURCHASE_SPEC: RowSpec = {
-  id: 'id',
-  profile_id: 'id',
-  institution_id: 'nullableText',
-  institution_name_snapshot: 'nullableText',
-  city_snapshot: 'nullableText',
-  name: 'name',
-  purchase_date: 'date',
-  total_amount_minor: 'integer',
-  currency: 'currency',
-  expires_on: 'nullableDate',
-  notes: 'nullableText',
-  created_at: 'timestamp',
-  updated_at: 'timestamp',
-};
-
-const PURCHASE_ITEM_SPEC: RowSpec = {
-  id: 'id',
-  purchase_id: 'id',
-  name: 'name',
-  category: 'category',
-  quantity: 'integer',
-  unit_amount_minor: 'integer',
-  notes: 'nullableText',
-  created_at: 'timestamp',
-  updated_at: 'timestamp',
-};
-
-const REDEMPTION_SPEC: RowSpec = {
-  id: 'id',
-  purchase_item_id: 'id',
-  institution_id: 'nullableText',
-  institution_name_snapshot: 'nullableText',
-  city_snapshot: 'nullableText',
-  redeemed_on: 'date',
-  status: 'status',
-  notes: 'nullableText',
-  created_at: 'timestamp',
-  updated_at: 'timestamp',
-  voided_at: 'nullableTimestamp',
-  void_reason: 'nullableText',
 };
 
 const WISHLIST_SPEC: RowSpec = {
@@ -161,30 +150,191 @@ const FAVORITE_SPEC: RowSpec = {
   created_at: 'timestamp',
 };
 
+// ---------------------------------------------------------------------------
+// 格式 1（schema v3）
+// ---------------------------------------------------------------------------
+
+const INSTITUTION_SPEC_V1: RowSpec = {
+  id: 'id',
+  profile_id: 'id',
+  name: 'name',
+  normalized_name: 'name',
+  city: 'nullableText',
+  notes: 'nullableText',
+  is_archived: 'flag',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+const PURCHASE_SPEC_V1: RowSpec = {
+  id: 'id',
+  profile_id: 'id',
+  institution_id: 'nullableText',
+  institution_name_snapshot: 'nullableText',
+  city_snapshot: 'nullableText',
+  name: 'name',
+  purchase_date: 'date',
+  total_amount_minor: 'integer',
+  currency: 'currency',
+  expires_on: 'nullableDate',
+  notes: 'nullableText',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+const PURCHASE_ITEM_SPEC_V1: RowSpec = {
+  id: 'id',
+  purchase_id: 'id',
+  name: 'name',
+  category: 'category',
+  quantity: 'integer',
+  unit_amount_minor: 'integer',
+  notes: 'nullableText',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+const REDEMPTION_SPEC_V1: RowSpec = {
+  id: 'id',
+  purchase_item_id: 'id',
+  institution_id: 'nullableText',
+  institution_name_snapshot: 'nullableText',
+  city_snapshot: 'nullableText',
+  redeemed_on: 'date',
+  status: 'redemptionStatus',
+  notes: 'nullableText',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+  voided_at: 'nullableTimestamp',
+  void_reason: 'nullableText',
+};
+
+// ---------------------------------------------------------------------------
+// 格式 2（schema v4，DATA_MODEL_V4 第 4、11 节）
+// ---------------------------------------------------------------------------
+
+const PERSON_SPEC: RowSpec = {
+  id: 'id',
+  profile_id: 'id',
+  display_name: 'name',
+  normalized_name: 'id',
+  is_self: 'flag',
+  status: 'personStatus',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+const INSTITUTION_SPEC_V2: RowSpec = {
+  ...INSTITUTION_SPEC_V1,
+  province_code: 'nullableCode',
+  province_name: 'nullableName',
+  city_code: 'nullableCode',
+};
+
+const PURCHASE_SPEC_V2: RowSpec = {
+  id: 'id',
+  profile_id: 'id',
+  purchase_kind: 'purchaseKind',
+  purchaser_person_id: 'id',
+  purchaser_name_snapshot: 'name',
+  institution_id: 'nullableText',
+  institution_name_snapshot: 'nullableText',
+  city_snapshot: 'nullableText',
+  name: 'name',
+  purchase_date: 'date',
+  total_amount_minor: 'integer',
+  currency: 'currency',
+  expires_on: 'nullableDate',
+  notes: 'nullableText',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+const PURCHASE_ITEM_SPEC_V2: RowSpec = {
+  id: 'id',
+  purchase_id: 'id',
+  name: 'name',
+  category_code: 'id',
+  service_code: 'nullableCode',
+  custom_name: 'nullableName',
+  quantity: 'integer',
+  allocated_amount_minor: 'integer',
+  notes: 'nullableText',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+const EVENT_SPEC: RowSpec = {
+  id: 'id',
+  profile_id: 'id',
+  occurred_on: 'date',
+  institution_id: 'nullableText',
+  institution_name_snapshot: 'nullableText',
+  province_code_snapshot: 'nullableCode',
+  province_name_snapshot: 'nullableText',
+  city_code_snapshot: 'nullableCode',
+  city_name_snapshot: 'nullableText',
+  notes: 'nullableText',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+const USAGE_SPEC: RowSpec = {
+  id: 'id',
+  event_id: 'id',
+  source_kind: 'sourceKind',
+  purchase_item_id: 'nullableText',
+  person_id: 'id',
+  person_name_snapshot: 'name',
+  category_code_snapshot: 'id',
+  service_code_snapshot: 'nullableCode',
+  service_name_snapshot: 'nullableText',
+  custom_name_snapshot: 'nullableText',
+  purchase_name_snapshot: 'nullableText',
+  purchase_item_name_snapshot: 'nullableText',
+  status: 'usageStatus',
+  voided_at: 'nullableTimestamp',
+  void_reason: 'nullableText',
+  notes: 'nullableText',
+  created_at: 'timestamp',
+  updated_at: 'timestamp',
+};
+
+/** 来源必须关联购买项目的两种 `source_kind`（DATA_MODEL_V4 第 5.1 节）。 */
+const ITEM_SOURCE_KINDS: readonly string[] = ['package_item', 'single_purchase'];
+
+/** 必须带套餐与套餐项目名称快照的 `source_kind`（DATA_MODEL_V4 第 4.6 节）。 */
+const SNAPSHOT_SOURCE_KINDS: readonly string[] = [...ITEM_SOURCE_KINDS, 'deleted_package'];
+
+function isBlank(value: string | null): boolean {
+  return value === null || value.trim().length === 0;
+}
+
 /**
  * 校验一份备份是否结构完整、内部自洽、且本版本读得懂。
  *
  * 纯函数：只看传进来的值，不读数据库、不读时钟、不读文件系统，
  * 因此导出前、恢复前都能跑同一份逻辑，自动化验证里也能直接喂构造出来的坏数据。
- * **导出与恢复共用这一个校验器**，不存在第二套会各自漂移的规则（任务书第五节）。
+ * **导出与恢复共用这一套校验器**，不存在第二套会各自漂移的规则（任务书第五节）。
  *
  * 它检查四类东西：
  *
  * 1. **信封**——`format` 对不对、`formatVersion` 认不认识、元数据齐不齐。
  * 2. **兼容性**——文件是否来自更新的格式版本或更新的数据库 schema。
  * 3. **每一行的字段**——缺字段、多字段、类型错、日期不存在、枚举越界、布尔不是 0/1。
- * 4. **内部引用与业务不变量**——项目挂在不存在的套餐上、核销引用不存在的项目、
+ * 4. **内部引用与业务不变量**——项目挂在不存在的套餐上、使用记录引用不存在的项目、
  *    机构引用不在本备份里、有数据属于另一个档案、ID 重复、判重键撞车。
  *
  * 第四类是真正的价值所在：单看每一行都合法、合到一起却对不上的备份，
  * 恢复时才会炸，而那时用户的原始数据可能已经没有了（任务书第六、十节）。
  *
+ * 本函数按 `formatVersion` 分派：1 走 v1 规则（通过后由调用方转换为 v2 再校验一次），
+ * 2 走 v2 规则。其余取值一律不接受。
+ *
  * 需要强调的是这里**不看任何外部状态**：恢复事务内还会再确认一次数据库版本，
  * 因为库有可能在用户挑文件的这段时间里被另一条路径动过。
  */
-export function validateBackupDocument(value: unknown): BackupValidationResult {
-  const issues: string[] = [];
-
+export function validateBackupDocument(value: unknown): BackupEnvelopeValidationResult {
   if (!isRecord(value)) {
     return fail(['备份不是一个对象'], 'notBackup');
   }
@@ -202,49 +352,38 @@ export function validateBackupDocument(value: unknown): BackupValidationResult {
     return fail(incompatibilities, 'incompatible');
   }
 
-  if (
-    typeof value.formatVersion !== 'number' ||
-    !SUPPORTED_FORMAT_VERSIONS.includes(value.formatVersion)
-  ) {
-    issues.push('formatVersion 不是当前支持的版本');
+  if (value.formatVersion === LEGACY_BACKUP_FORMAT_VERSION) {
+    const result = validateV1(value);
+    return result.ok ? { ok: true, formatVersion: 1 } : result;
   }
-  checkField(issues, 'exportedAt', 'timestamp', value.exportedAt);
-  if (!isPositiveInteger(value.databaseSchemaVersion)) {
-    issues.push('databaseSchemaVersion 不是正整数');
+  if (value.formatVersion === BACKUP_FORMAT_VERSION) {
+    const result = validateV2(value);
+    return result.ok ? { ok: true, formatVersion: 2 } : result;
   }
-  checkUnknownKeys(issues, '备份', DOCUMENT_KEYS, value);
+  return fail(['formatVersion 不是当前支持的版本'], 'invalid');
+}
 
-  const profile = value.profile;
-  if (!isRecord(profile)) {
-    issues.push('缺少 profile');
-  } else {
-    checkRow(issues, 'profile', PROFILE_SPEC, profile);
+/**
+ * 只按格式 2 的规则校验。
+ *
+ * 用于两处：导出前的自检，以及 v1 → v2 转换之后的复检（DATA_MODEL_V4 第 11.3 节）。
+ * 格式 1 的文档在这里一律是 `invalid`：到这一步的文档必须已经是 v2。
+ */
+export function validateBackupDocumentV2(value: unknown): BackupValidationResult {
+  if (!isRecord(value)) {
+    return fail(['备份不是一个对象'], 'notBackup');
   }
-
-  const institutions = takeArray(issues, 'institutions', value.institutions);
-  const purchases = takeArray(issues, 'purchases', value.purchases);
-  const purchaseItems = takeArray(issues, 'purchaseItems', value.purchaseItems);
-  const redemptionRecords = takeArray(issues, 'redemptionRecords', value.redemptionRecords);
-  const wishlistItems = takeArray(issues, 'wishlistItems', value.wishlistItems);
-  const catalogFavorites = takeArray(issues, 'catalogFavorites', value.catalogFavorites);
-
-  checkRows(issues, 'institutions', INSTITUTION_SPEC, institutions);
-  checkRows(issues, 'purchases', PURCHASE_SPEC, purchases);
-  checkRows(issues, 'purchaseItems', PURCHASE_ITEM_SPEC, purchaseItems);
-  checkRows(issues, 'redemptionRecords', REDEMPTION_SPEC, redemptionRecords);
-  checkRows(issues, 'wishlistItems', WISHLIST_SPEC, wishlistItems);
-  checkRows(issues, 'catalogFavorites', FAVORITE_SPEC, catalogFavorites);
-
-  // 前面任何一项不过关时就不再查引用关系：在一堆类型错误上继续推导归属，
-  // 只会把同一个问题换着说法再报十遍。
-  if (issues.length > 0) {
-    return fail(issues, 'invalid');
+  if (value.format !== BACKUP_FORMAT) {
+    return fail([`format 应为 ${BACKUP_FORMAT}`], 'notBackup');
   }
-
-  const document = value as unknown as BackupDocument;
-  checkConsistency(issues, document);
-
-  return issues.length === 0 ? { ok: true } : fail(issues, 'invalid');
+  const incompatibilities = checkCompatibility(value);
+  if (incompatibilities.length > 0) {
+    return fail(incompatibilities, 'incompatible');
+  }
+  if (value.formatVersion !== BACKUP_FORMAT_VERSION) {
+    return fail(['formatVersion 不是 2'], 'invalid');
+  }
+  return validateV2(value);
 }
 
 /**
@@ -257,7 +396,7 @@ export function validateBackupDocument(value: unknown): BackupValidationResult {
  *
  * 一个来自更高 schema 的备份可能带着本地还没有的表或列，写回去要么丢数据、
  * 要么撞上不存在的约束。这时正确的做法是拒绝，而不是按当前认识挑着恢复。
- * 反过来，schema 比本地**低**是允许的：本地迁移已经把旧结构升上来了。
+ * 反过来，schema 比本地**低**是允许的：格式 1 的旧备份会先转换为格式 2。
  *
  * 这里绝不会因为文件里写了什么就去改 `PRAGMA user_version`：备份是数据，
  * 不是 migration（任务书第三、五节）。
@@ -276,15 +415,68 @@ function checkCompatibility(value: Readonly<Record<string, unknown>>): string[] 
   return issues;
 }
 
-/** 内部引用与业务不变量。此时每一行的字段类型都已确认合法。 */
-function checkConsistency(issues: string[], document: BackupDocument): void {
-  const profileId = document.profile.id;
-
-  // 档案必须是默认档案。第一版全 App 只有一个可用档案（ADR-015），恢复一个
-  // `is_default = 0` 的档案会让用户进到一个哪儿都读不到数据的 App。
-  if (document.profile.is_default !== 1) {
-    issues.push('profile.is_default 不是 1');
+/** 信封里除版本号以外的元数据：导出时间、schema 版本、顶层键集合与档案行。 */
+function checkEnvelope(
+  issues: string[],
+  value: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+): void {
+  checkField(issues, 'exportedAt', 'timestamp', value.exportedAt);
+  if (!isPositiveInteger(value.databaseSchemaVersion)) {
+    issues.push('databaseSchemaVersion 不是正整数');
   }
+  checkUnknownKeys(issues, '备份', keys, value);
+
+  const profile = value.profile;
+  if (!isRecord(profile)) {
+    issues.push('缺少 profile');
+  } else {
+    checkRow(issues, 'profile', PROFILE_SPEC, profile);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 格式 1
+// ---------------------------------------------------------------------------
+
+function validateV1(value: Readonly<Record<string, unknown>>): BackupValidationResult {
+  const issues: string[] = [];
+  checkEnvelope(issues, value, DOCUMENT_KEYS_V1);
+
+  // 格式 1 只可能由 schema v1–v3 导出。写着 v4 以上的格式 1 文件对不上任何
+  // 真实导出，只能是被改过或组装错了。
+  if (isPositiveInteger(value.databaseSchemaVersion) && (value.databaseSchemaVersion as number) >= BACKUP_V2_SCHEMA_VERSION) {
+    issues.push('格式 1 的 databaseSchemaVersion 应低于 4');
+  }
+
+  const institutions = takeArray(issues, 'institutions', value.institutions);
+  const purchases = takeArray(issues, 'purchases', value.purchases);
+  const purchaseItems = takeArray(issues, 'purchaseItems', value.purchaseItems);
+  const redemptionRecords = takeArray(issues, 'redemptionRecords', value.redemptionRecords);
+  const wishlistItems = takeArray(issues, 'wishlistItems', value.wishlistItems);
+  const catalogFavorites = takeArray(issues, 'catalogFavorites', value.catalogFavorites);
+
+  checkRows(issues, 'institutions', INSTITUTION_SPEC_V1, institutions);
+  checkRows(issues, 'purchases', PURCHASE_SPEC_V1, purchases);
+  checkRows(issues, 'purchaseItems', PURCHASE_ITEM_SPEC_V1, purchaseItems);
+  checkRows(issues, 'redemptionRecords', REDEMPTION_SPEC_V1, redemptionRecords);
+  checkRows(issues, 'wishlistItems', WISHLIST_SPEC, wishlistItems);
+  checkRows(issues, 'catalogFavorites', FAVORITE_SPEC, catalogFavorites);
+
+  // 前面任何一项不过关时就不再查引用关系：在一堆类型错误上继续推导归属，
+  // 只会把同一个问题换着说法再报十遍。
+  if (issues.length > 0) {
+    return fail(issues, 'invalid');
+  }
+
+  checkConsistencyV1(issues, value as unknown as BackupDocumentV1);
+  return issues.length === 0 ? { ok: true } : fail(issues, 'invalid');
+}
+
+/** 格式 1 的内部引用与业务不变量。此时每一行的字段类型都已确认合法。 */
+function checkConsistencyV1(issues: string[], document: BackupDocumentV1): void {
+  const profileId = document.profile.id;
+  checkProfileAndFavorites(issues, document.profile.is_default, document.catalogFavorites);
 
   const institutionIds = collectIds(issues, 'institutions', document.institutions);
   const purchaseIds = collectIds(issues, 'purchases', document.purchases);
@@ -292,30 +484,13 @@ function checkConsistency(issues: string[], document: BackupDocument): void {
   collectIds(issues, 'redemptionRecords', document.redemptionRecords);
   collectIds(issues, 'wishlistItems', document.wishlistItems);
 
-  const favoriteKeys = new Set<string>();
-  document.catalogFavorites.forEach((favorite, index) => {
-    if (favoriteKeys.has(favorite.article_slug)) {
-      issues.push(`catalogFavorites[${index}] 收藏重复`);
-    }
-    favoriteKeys.add(favorite.article_slug);
-  });
-
   // 档案隔离：备份里不允许出现任何属于另一个档案的行（任务书第六节）。
   checkOwner(issues, 'institutions', profileId, document.institutions);
   checkOwner(issues, 'purchases', profileId, document.purchases);
   checkOwner(issues, 'wishlistItems', profileId, document.wishlistItems);
   checkOwner(issues, 'catalogFavorites', profileId, document.catalogFavorites);
 
-  // 机构判重键。库里没有唯一索引，判重靠业务层（PRD 第 5A.3.2 节），
-  // 因此备份里撞车的两个机构写得进去，却会让此后每一次改名、恢复归档
-  // 都撞上「已存在同名机构」而无法保存。在恢复之前拦下。
-  const normalizedNames = new Set<string>();
-  document.institutions.forEach((institution, index) => {
-    if (normalizedNames.has(institution.normalized_name)) {
-      issues.push(`institutions[${index}] 与另一个机构判重键相同`);
-    }
-    normalizedNames.add(institution.normalized_name);
-  });
+  checkInstitutionNames(issues, document.institutions);
 
   document.purchaseItems.forEach((item, index) => {
     if (!purchaseIds.has(item.purchase_id)) {
@@ -330,39 +505,332 @@ function checkConsistency(issues: string[], document: BackupDocument): void {
   });
 
   document.purchases.forEach((purchase, index) => {
-    if (purchase.total_amount_minor < 0) {
-      issues.push(`purchases[${index}].total_amount_minor 为负`);
-    }
-    // 与表级 CHECK 同一口径：有效期不得早于购买日期（PRD 第 6.4 节）。
-    if (
-      purchase.expires_on !== null &&
-      compareBusinessDates(purchase.expires_on, purchase.purchase_date) < 0
-    ) {
-      issues.push(`purchases[${index}].expires_on 早于购买日期`);
-    }
-    checkInstitutionRef(issues, `purchases[${index}]`, institutionIds, purchase.institution_id);
+    checkPurchaseBasics(issues, `purchases[${index}]`, purchase, institutionIds);
   });
 
   document.redemptionRecords.forEach((record, index) => {
     if (!itemIds.has(record.purchase_item_id)) {
       issues.push(`redemptionRecords[${index}] 指向不存在的套餐项目`);
     }
-    // 与表级 CHECK 约束同一口径：撤销必须留下时间，有效记录不能带撤销时间。
-    if (record.status === 'void' && record.voided_at === null) {
-      issues.push(`redemptionRecords[${index}] 已撤销但缺少撤销时间`);
-    }
-    if (record.status === 'active' && record.voided_at !== null) {
-      issues.push(`redemptionRecords[${index}] 有效却带着撤销时间`);
-    }
-    // 撤销原因跟着撤销走。表上没有这条 CHECK，但一条「有效」却写着撤销原因的
-    // 记录在界面上无法解释，只能是文件被改过或导出侧出了 bug。
-    if (record.status === 'active' && record.void_reason !== null) {
-      issues.push(`redemptionRecords[${index}] 有效却带着撤销原因`);
-    }
+    checkVoidFields(issues, `redemptionRecords[${index}]`, record);
     checkInstitutionRef(issues, `redemptionRecords[${index}]`, institutionIds, record.institution_id);
   });
 
-  document.wishlistItems.forEach((wish, index) => {
+  checkWishlist(issues, document.wishlistItems, institutionIds);
+}
+
+// ---------------------------------------------------------------------------
+// 格式 2
+// ---------------------------------------------------------------------------
+
+function validateV2(value: Readonly<Record<string, unknown>>): BackupValidationResult {
+  const issues: string[] = [];
+  checkEnvelope(issues, value, DOCUMENT_KEYS_V2);
+
+  // 格式 2 的结构就是 schema v4 的结构，不可能由更早的数据库导出。
+  if (isPositiveInteger(value.databaseSchemaVersion) && (value.databaseSchemaVersion as number) < BACKUP_V2_SCHEMA_VERSION) {
+    issues.push('格式 2 的 databaseSchemaVersion 不应低于 4');
+  }
+
+  const people = takeArray(issues, 'people', value.people);
+  const institutions = takeArray(issues, 'institutions', value.institutions);
+  const purchases = takeArray(issues, 'purchases', value.purchases);
+  const purchaseItems = takeArray(issues, 'purchaseItems', value.purchaseItems);
+  const beautyEvents = takeArray(issues, 'beautyEvents', value.beautyEvents);
+  const usageRecords = takeArray(issues, 'usageRecords', value.usageRecords);
+  const wishlistItems = takeArray(issues, 'wishlistItems', value.wishlistItems);
+  const catalogFavorites = takeArray(issues, 'catalogFavorites', value.catalogFavorites);
+
+  checkRows(issues, 'people', PERSON_SPEC, people);
+  checkRows(issues, 'institutions', INSTITUTION_SPEC_V2, institutions);
+  checkRows(issues, 'purchases', PURCHASE_SPEC_V2, purchases);
+  checkRows(issues, 'purchaseItems', PURCHASE_ITEM_SPEC_V2, purchaseItems);
+  checkRows(issues, 'beautyEvents', EVENT_SPEC, beautyEvents);
+  checkRows(issues, 'usageRecords', USAGE_SPEC, usageRecords);
+  checkRows(issues, 'wishlistItems', WISHLIST_SPEC, wishlistItems);
+  checkRows(issues, 'catalogFavorites', FAVORITE_SPEC, catalogFavorites);
+
+  if (issues.length > 0) {
+    return fail(issues, 'invalid');
+  }
+
+  checkConsistencyV2(issues, value as unknown as BackupDocument);
+  return issues.length === 0 ? { ok: true } : fail(issues, 'invalid');
+}
+
+/**
+ * 格式 2 的内部引用与业务不变量（DATA_MODEL_V4 第 11.4 节）。
+ *
+ * 数据库里的外键在原生独占事务中是关闭的，恢复时不能指望它们兜底；
+ * 这里与恢复事务内的自查一起，把表级 CHECK 与外键的口径各守一遍。
+ */
+function checkConsistencyV2(issues: string[], document: BackupDocument): void {
+  const profileId = document.profile.id;
+  checkProfileAndFavorites(issues, document.profile.is_default, document.catalogFavorites);
+
+  const personIds = collectIds(issues, 'people', document.people);
+  const institutionIds = collectIds(issues, 'institutions', document.institutions);
+  collectIds(issues, 'purchases', document.purchases);
+  collectIds(issues, 'purchaseItems', document.purchaseItems);
+  const eventIds = collectIds(issues, 'beautyEvents', document.beautyEvents);
+  collectIds(issues, 'usageRecords', document.usageRecords);
+  collectIds(issues, 'wishlistItems', document.wishlistItems);
+
+  checkOwner(issues, 'people', profileId, document.people);
+  checkOwner(issues, 'institutions', profileId, document.institutions);
+  checkOwner(issues, 'purchases', profileId, document.purchases);
+  checkOwner(issues, 'beautyEvents', profileId, document.beautyEvents);
+  checkOwner(issues, 'wishlistItems', profileId, document.wishlistItems);
+  checkOwner(issues, 'catalogFavorites', profileId, document.catalogFavorites);
+
+  // 人：恰好一个「自己」且在使用中；判重键在档案内唯一（表上有唯一索引）。
+  const selves = document.people.filter((person) => person.is_self === 1);
+  if (selves.length !== 1) {
+    issues.push(`people 中「自己」的数量为 ${selves.length}，应为 1`);
+  }
+  document.people.forEach((person, index) => {
+    if (person.is_self === 1 && person.status !== 'active') {
+      issues.push(`people[${index}] 是「自己」却不在使用中`);
+    }
+  });
+  const personNames = new Set<string>();
+  document.people.forEach((person, index) => {
+    if (personNames.has(person.normalized_name)) {
+      issues.push(`people[${index}] 与另一个人判重键相同`);
+    }
+    personNames.add(person.normalized_name);
+  });
+
+  checkInstitutionNames(issues, document.institutions);
+
+  // 机构地点只允许 A（全空）、B（省）、C（省 + 市）三种组合（DATA_MODEL_V4 第 4.7 节）。
+  document.institutions.forEach((institution, index) => {
+    const path = `institutions[${index}]`;
+    const hasProvinceCode = institution.province_code !== null;
+    const hasProvinceName = institution.province_name !== null;
+    if (hasProvinceCode !== hasProvinceName) {
+      issues.push(`${path} 省代码与省名称没有成对出现`);
+    }
+    if (institution.city_code !== null && !(hasProvinceCode && hasProvinceName)) {
+      issues.push(`${path} 有城市代码却缺少省代码或省名称`);
+    }
+    if (
+      (hasProvinceCode || institution.city_code !== null) &&
+      (institution.city === null || institution.city.trim().length === 0)
+    ) {
+      issues.push(`${path} 有地点代码却没有城市文字`);
+    }
+  });
+
+  const purchasesById = new Map(document.purchases.map((purchase) => [purchase.id, purchase]));
+  const itemsById = new Map(document.purchaseItems.map((item) => [item.id, item]));
+  const eventsById = new Map(document.beautyEvents.map((event) => [event.id, event]));
+  const peopleById = new Map(document.people.map((person) => [person.id, person]));
+
+  const itemCountByPurchase = new Map<string, number>();
+  document.purchaseItems.forEach((item, index) => {
+    const path = `purchaseItems[${index}]`;
+    if (!purchasesById.has(item.purchase_id)) {
+      issues.push(`${path} 指向不存在的套餐`);
+    }
+    itemCountByPurchase.set(item.purchase_id, (itemCountByPurchase.get(item.purchase_id) ?? 0) + 1);
+    if (item.quantity < 1) {
+      issues.push(`${path}.quantity 小于 1`);
+    }
+    if (item.allocated_amount_minor < 0) {
+      issues.push(`${path}.allocated_amount_minor 为负`);
+    }
+    if (item.service_code === null && item.custom_name === null) {
+      issues.push(`${path} 既没有目录代码也没有自定义名称`);
+    }
+  });
+
+  document.purchases.forEach((purchase, index) => {
+    const path = `purchases[${index}]`;
+    checkPurchaseBasics(issues, path, purchase, institutionIds);
+    if (!personIds.has(purchase.purchaser_person_id)) {
+      issues.push(`${path} 的购买人不在本备份中`);
+    }
+    if (purchase.purchase_kind === 'single') {
+      // 单次购买恰好一个项目、购买次数 1（PRD 第 5B.8 节）。
+      const items = document.purchaseItems.filter((item) => item.purchase_id === purchase.id);
+      if (items.length !== 1 || items[0].quantity !== 1) {
+        issues.push(`${path} 是单次购买，却不是恰好一个次数为 1 的项目`);
+      }
+    }
+  });
+
+  document.beautyEvents.forEach((event, index) => {
+    const path = `beautyEvents[${index}]`;
+    checkInstitutionRef(issues, path, institutionIds, event.institution_id);
+    // 与表级 CHECK 同一口径（DATA_MODEL_V4 第 4.5 节）。
+    if ((event.province_code_snapshot === null) !== (event.province_name_snapshot === null)) {
+      issues.push(`${path} 省代码快照与省名称快照没有成对出现`);
+    }
+    if (
+      event.city_code_snapshot !== null &&
+      (event.province_code_snapshot === null || event.city_name_snapshot === null)
+    ) {
+      issues.push(`${path} 有城市代码快照却缺少省代码或城市名称快照`);
+    }
+  });
+
+  document.usageRecords.forEach((usage, index) => {
+    const path = `usageRecords[${index}]`;
+    const event = eventsById.get(usage.event_id);
+    const person = peopleById.get(usage.person_id);
+    if (!eventIds.has(usage.event_id)) {
+      issues.push(`${path} 指向不存在的变美记录`);
+    }
+    if (person === undefined) {
+      issues.push(`${path} 的使用人不在本备份中`);
+    }
+
+    const needsItem = ITEM_SOURCE_KINDS.includes(usage.source_kind);
+    if (needsItem && usage.purchase_item_id === null) {
+      issues.push(`${path} 来源需要关联购买项目却没有关联`);
+    }
+    if (!needsItem && usage.purchase_item_id !== null) {
+      issues.push(`${path} 来源不应关联购买项目却关联了`);
+    }
+
+    if (usage.purchase_item_id !== null) {
+      const item = itemsById.get(usage.purchase_item_id);
+      const purchase = item === undefined ? undefined : purchasesById.get(item.purchase_id);
+      if (item === undefined) {
+        issues.push(`${path} 指向不存在的购买项目`);
+      } else if (purchase !== undefined) {
+        const expected = purchase.purchase_kind === 'single' ? 'single_purchase' : 'package_item';
+        if (needsItem && usage.source_kind !== expected) {
+          issues.push(`${path} 的来源与所关联购买的类型不一致`);
+        }
+        if (event !== undefined && purchase.profile_id !== event.profile_id) {
+          issues.push(`${path} 的来源购买与变美记录不属于同一档案`);
+        }
+      }
+    }
+    if (event !== undefined && person !== undefined && person.profile_id !== event.profile_id) {
+      issues.push(`${path} 的使用人与变美记录不属于同一档案`);
+    }
+
+    // 与表级 CHECK 同一口径（DATA_MODEL_V4 第 4.6 节）。
+    if (usage.status === 'active' && (usage.voided_at !== null || usage.void_reason !== null)) {
+      issues.push(`${path} 有效却带着撤销时间或撤销原因`);
+    }
+    if (usage.status === 'void' && usage.voided_at === null) {
+      issues.push(`${path} 已撤销但缺少撤销时间`);
+    }
+    if (usage.service_code_snapshot !== null && usage.service_name_snapshot === null) {
+      issues.push(`${path} 有目录代码快照却没有目录名称快照`);
+    }
+    if (usage.service_code_snapshot === null && usage.custom_name_snapshot === null) {
+      issues.push(`${path} 既没有目录代码快照也没有自定义名称快照`);
+    }
+    // 来源为套餐、单次购买或原套餐已删除时，套餐与套餐项目名称快照必须在：
+    // 套餐删除后它们是这条记录与原套餐之间唯一的线索（DATA_MODEL_V4 第 4.6 节）。
+    if (
+      SNAPSHOT_SOURCE_KINDS.includes(usage.source_kind) &&
+      (isBlank(usage.purchase_name_snapshot) || isBlank(usage.purchase_item_name_snapshot))
+    ) {
+      issues.push(`${path} 缺少套餐或套餐项目名称快照`);
+    }
+  });
+
+  // 这里刻意不检查「有效使用次数不超过购买次数」：历史数据（v3 核销、v1 备份）
+  // 可能已经超用，迁移与恢复都必须原样保留（DATA_MODEL_V4 第 11.4 节）。
+  // 阻止**新增**超用是写入路径的职责，备份只校验结构与引用。
+
+  checkWishlist(issues, document.wishlistItems, institutionIds);
+}
+
+// ---------------------------------------------------------------------------
+// 两个格式共用的规则
+// ---------------------------------------------------------------------------
+
+function checkProfileAndFavorites(
+  issues: string[],
+  isDefault: number,
+  favorites: readonly { readonly article_slug: string }[],
+): void {
+  // 档案必须是默认档案。第一版全 App 只有一个可用档案（ADR-015），恢复一个
+  // `is_default = 0` 的档案会让用户进到一个哪儿都读不到数据的 App。
+  if (isDefault !== 1) {
+    issues.push('profile.is_default 不是 1');
+  }
+
+  const favoriteKeys = new Set<string>();
+  favorites.forEach((favorite, index) => {
+    if (favoriteKeys.has(favorite.article_slug)) {
+      issues.push(`catalogFavorites[${index}] 收藏重复`);
+    }
+    favoriteKeys.add(favorite.article_slug);
+  });
+}
+
+/**
+ * 机构判重键。库里没有唯一索引，判重靠业务层（PRD 第 5A.3.2 节），
+ * 因此备份里撞车的两个机构写得进去，却会让此后每一次改名、恢复归档
+ * 都撞上「已存在同名机构」而无法保存。在恢复之前拦下。
+ */
+function checkInstitutionNames(
+  issues: string[],
+  institutions: readonly { readonly normalized_name: string }[],
+): void {
+  const normalizedNames = new Set<string>();
+  institutions.forEach((institution, index) => {
+    if (normalizedNames.has(institution.normalized_name)) {
+      issues.push(`institutions[${index}] 与另一个机构判重键相同`);
+    }
+    normalizedNames.add(institution.normalized_name);
+  });
+}
+
+function checkPurchaseBasics(
+  issues: string[],
+  path: string,
+  purchase: {
+    readonly total_amount_minor: number;
+    readonly purchase_date: string;
+    readonly expires_on: string | null;
+    readonly institution_id: string | null;
+  },
+  institutionIds: ReadonlySet<string>,
+): void {
+  if (purchase.total_amount_minor < 0) {
+    issues.push(`${path}.total_amount_minor 为负`);
+  }
+  // 与表级 CHECK 同一口径：有效期不得早于购买日期（PRD 第 6.4 节）。
+  if (purchase.expires_on !== null && compareBusinessDates(purchase.expires_on, purchase.purchase_date) < 0) {
+    issues.push(`${path}.expires_on 早于购买日期`);
+  }
+  checkInstitutionRef(issues, path, institutionIds, purchase.institution_id);
+}
+
+function checkVoidFields(
+  issues: string[],
+  path: string,
+  record: { readonly status: string; readonly voided_at: string | null; readonly void_reason: string | null },
+): void {
+  // 与表级 CHECK 约束同一口径：撤销必须留下时间，有效记录不能带撤销时间。
+  if (record.status === 'void' && record.voided_at === null) {
+    issues.push(`${path} 已撤销但缺少撤销时间`);
+  }
+  if (record.status === 'active' && record.voided_at !== null) {
+    issues.push(`${path} 有效却带着撤销时间`);
+  }
+  // 撤销原因跟着撤销走。一条「有效」却写着撤销原因的记录在界面上无法解释，
+  // 只能是文件被改过或导出侧出了 bug。
+  if (record.status === 'active' && record.void_reason !== null) {
+    issues.push(`${path} 有效却带着撤销原因`);
+  }
+}
+
+function checkWishlist(
+  issues: string[],
+  wishlistItems: readonly { readonly budget_minor: number | null; readonly institution_id: string | null }[],
+  institutionIds: ReadonlySet<string>,
+): void {
+  wishlistItems.forEach((wish, index) => {
     if (wish.budget_minor !== null && wish.budget_minor < 0) {
       issues.push(`wishlistItems[${index}].budget_minor 为负`);
     }
@@ -511,13 +979,26 @@ function isValidValue(kind: FieldKind, value: unknown): boolean {
       return isTimestamp(value);
     case 'category':
     case 'nullableCategory':
-      return (
-        typeof value === 'string' &&
-        (PURCHASE_ITEM_CATEGORIES as readonly string[]).includes(value)
-      );
-    case 'status':
-      return typeof value === 'string' && (REDEMPTION_STATUSES as readonly string[]).includes(value);
+      return isOneOf(PURCHASE_ITEM_CATEGORIES, value);
+    case 'nullableCode':
+      return typeof value === 'string' && value.length > 0;
+    case 'nullableName':
+      return typeof value === 'string' && value.trim().length > 0;
+    case 'redemptionStatus':
+      return isOneOf(REDEMPTION_STATUSES, value);
+    case 'purchaseKind':
+      return isOneOf(PURCHASE_KINDS, value);
+    case 'personStatus':
+      return isOneOf(PERSON_STATUSES, value);
+    case 'sourceKind':
+      return isOneOf(USAGE_SOURCE_KINDS, value);
+    case 'usageStatus':
+      return isOneOf(USAGE_STATUSES, value);
   }
+}
+
+function isOneOf(values: readonly string[], value: unknown): boolean {
+  return typeof value === 'string' && values.includes(value);
 }
 
 function isNullable(kind: FieldKind): boolean {
@@ -539,7 +1020,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function fail(
   issues: readonly string[],
   kind: BackupValidationFailureKind,
-): BackupValidationResult {
+): BackupValidationFailure {
   if (issues.length <= MAX_ISSUES) {
     return { ok: false, kind, issues };
   }

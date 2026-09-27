@@ -5,6 +5,7 @@ import {
   PURCHASE_ITEM_CATEGORIES,
   REDEMPTION_STATUSES,
 } from './constants';
+import { migration004 } from './migration-004';
 import type { Migration } from './types';
 
 /**
@@ -337,7 +338,7 @@ const migration003: Migration = {
  * 全部迁移，按 version 升序。新增 V4、V5 时在数组末尾追加一个 `Migration`，
  * 不要改动已有条目。
  */
-export const MIGRATIONS: readonly Migration[] = [migration001, migration002, migration003];
+export const MIGRATIONS: readonly Migration[] = [migration001, migration002, migration003, migration004];
 
 /** 当前代码期望的 schema 版本。从迁移列表派生，不手工维护，避免与实际迁移脱节。 */
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(

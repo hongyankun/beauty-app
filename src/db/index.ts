@@ -9,8 +9,14 @@ export {
   DEFAULT_CURRENCY,
   DEFAULT_PROFILE_DISPLAY_NAME,
   DEFAULT_PROFILE_ID,
+  PERSON_STATUSES,
   PURCHASE_ITEM_CATEGORIES,
+  PURCHASE_KINDS,
   REDEMPTION_STATUSES,
+  SELF_PERSON_DISPLAY_NAME,
+  SELF_PERSON_ID,
+  USAGE_SOURCE_KINDS,
+  USAGE_STATUSES,
 } from './constants';
 
 export { LATEST_SCHEMA_VERSION, MIGRATIONS } from './migrations';
@@ -32,6 +38,7 @@ export type {
   InstitutionRepository,
   InstitutionUpdate,
   InstitutionUsageRow,
+  PeopleRepository,
   PurchaseDeletionImpactRow,
   PurchaseItemContextRow,
   PurchaseItemDetailRow,
@@ -57,17 +64,22 @@ export type {
 } from './repositories';
 
 export type {
+  BeautyEventRow,
   BusinessDate,
   CatalogFavoriteRow,
   InstitutionRow,
   Migration,
+  PersonRow,
+  PersonStatus,
   ProfileRow,
   PurchaseItemCategory,
   PurchaseItemRow,
+  PurchaseKind,
   PurchaseRow,
-  RedemptionRecordRow,
-  RedemptionStatus,
   SqliteBoolean,
+  UsageRecordRow,
+  UsageSourceKind,
+  UsageStatus,
   UtcTimestamp,
   WishlistItemRow,
 } from './types';

@@ -2,19 +2,24 @@
 
 相关文档：[产品需求](./PRODUCT_REQUIREMENTS.md) · [架构](./ARCHITECTURE.md) · [决策记录](./DECISIONS.md) · [路线图](./ROADMAP.md) · [信息架构](./INFORMATION_ARCHITECTURE.md)
 
-> **状态：已批准，尚未实现。**
+> **状态：数据层已实现（BT-0022）；界面仍待后续任务。**
 >
 > 本文件是 schema v4 与备份 `formatVersion` 2 的**唯一规范来源**（BT-0019D 冻结）。
 > 其他文档只做摘要并链接到这里，不重复列定义；如有出入，以本文件为准，并先修正本文件再改代码。
 >
-> 截至本文件写成时，App 实际运行的是 **schema v3** 与**备份 `formatVersion` 1**。
-> 本文件描述的表、列、迁移与备份格式**一个都还不存在**，只有 BT-0022 可以把它们落地（第 12 节）。
+> BT-0022 已落地本文件的表、列、v3 → v4 迁移（`src/db/migration-004.ts`）、备份 `formatVersion` 2
+> 的导出、校验与恢复，以及 v1 → v2 的纯函数转换；冻结的字段语义未作任何修改。
+> App 现在运行 **schema v4**，只导出**备份 `formatVersion` 2**，仍可恢复 v1 备份。
+>
+> 现有页面通过兼容层继续工作：快速核销写入一条变美记录加一条使用记录，核销历史读取使用记录，
+> 删除套餐按第 5.2 节保留使用记录。使用人管理、两步式套餐表单、省市选择器接线、项目选择器、
+> 「记录一次变美」表单与记录 Tab 的新视图**均未实现**（第 12 节 BT-0019C、BT-0020、BT-0019B2、BT-0021B、BT-0023、BT-0024）。
 
 ---
 
 ## 1 范围与术语
 
-### 1.1 当前已实现（schema v3 / 备份 v1）
+### 1.1 v4 之前的事实（schema v3 / 备份 v1，已由 BT-0022 迁移）
 
 | 项 | 当前事实 |
 | --- | --- |
@@ -86,7 +91,8 @@ Profile ─┬─< Person（people）
 
 **派生值不落库**：
 
-- `remaining = PurchaseItem.quantity − 该项目 status = 'active' 的 UsageRecord 数`。
+- `remaining = MAX(0, PurchaseItem.quantity − 该项目 status = 'active' 的 UsageRecord 数)`，逐项计算；套餐与全档案的待使用次数是各项目 `remaining` 之和，不得先汇总再相减。
+- **历史超用**：旧数据中某个项目的有效使用数可能大于 `quantity`（例如 v3 时期补录）。这类数据被迁移、备份、校验与恢复**原样保留**，`remaining` 显示为 0；不落库负数，不新增任何标记字段，不自动作废记录、不自动调高 `quantity`、不自动修正。**新增**有效使用（快速核销、未来的「记录一次变美」、修正来源重新关联）与调低 `quantity` 必须阻止超用。详见第 5.3 节与第 11.4 节。
 - 单次均价 = `allocated_amount_minor ÷ quantity`，不能整除时只作「约」展示（ADR-023）。
 - 临期与过期状态、待使用次数、累计投入均为查询时派生。
 
@@ -247,7 +253,11 @@ CREATE TABLE usage_records (
   CHECK ((source_kind IN ('package_item', 'single_purchase') AND purchase_item_id IS NOT NULL)
       OR (source_kind IN ('external', 'unlinked', 'deleted_package') AND purchase_item_id IS NULL)),
   CHECK (service_code_snapshot IS NULL OR service_name_snapshot IS NOT NULL),
-  CHECK (service_code_snapshot IS NOT NULL OR custom_name_snapshot IS NOT NULL)
+  CHECK (service_code_snapshot IS NOT NULL OR custom_name_snapshot IS NOT NULL),
+  CHECK (source_kind IN ('external', 'unlinked')
+      OR (purchase_name_snapshot IS NOT NULL AND length(trim(purchase_name_snapshot)) > 0
+          AND purchase_item_name_snapshot IS NOT NULL
+          AND length(trim(purchase_item_name_snapshot)) > 0))
 );
 CREATE INDEX idx_usage_records_event       ON usage_records (event_id);
 CREATE INDEX idx_usage_records_person      ON usage_records (person_id);
@@ -261,7 +271,7 @@ CREATE INDEX idx_usage_records_item_status ON usage_records (purchase_item_id, s
 - 快照列的含义：
   - `person_name_snapshot`：当时使用人的显示名称。
   - `category_code_snapshot` / `service_code_snapshot` / `service_name_snapshot` / `custom_name_snapshot`：当时做的是什么项目。
-  - `purchase_name_snapshot` / `purchase_item_name_snapshot`：来源为套餐或单次购买时，当时的套餐名称与项目名称；新建为 `external` 或 `unlinked` 时为空。**套餐被删除后，这两列就是「这次用的是哪张卡」唯一留下的线索**。
+  - `purchase_name_snapshot` / `purchase_item_name_snapshot`：来源为套餐或单次购买时，当时的套餐名称与项目名称；新建为 `external` 或 `unlinked` 时为空。**套餐被删除后，这两列就是「这次用的是哪张卡」唯一留下的线索**，因此 `package_item`、`single_purchase` 与 `deleted_package` 三种来源要求两列非空白（表级 CHECK，BT-0022A 补齐）；`external` 与 `unlinked` 不作要求，改为这两种来源时已有名称可以保留（第 5.5 节）。
 - 所有快照在写入时一次性填好，之后**不回写**。编辑套餐名称、项目名称、人名或目录显示名，都不改变已有使用记录的快照。唯一会改写来源快照的是用户对这条记录本身的来源修正，规则见第 5.5 节。
 
 ### 4.7 `institutions`（扩展）
@@ -345,7 +355,7 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 ### 5.3 项目删除与次数下限（ADR-018 口径在 v4 的落点）
 
 - 编辑套餐时，项目能否删除以**是否存在任何 UsageRecord**（`active` 或 `void`）为界。
-- `quantity` 不得小于该项目 `active` 的 UsageRecord 数，表单层与事务层两层保证。
+- `quantity` 不得小于该项目 `active` 的 UsageRecord 数，表单层与事务层两层保证。历史超用的项目（有效使用数已大于 `quantity`）下限是它**现有**的 `quantity`：可以保持或调高，以便照常修改套餐其他内容，但不能再调低。即下限 = `MIN(有效使用数, 现有 quantity)`。
 - 既有项目按 ID 原地更新，禁止「全删再插」。
 - `deleted_package` 的使用记录已与项目断开，不再阻止任何项目删除。
 
@@ -611,7 +621,8 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 - `usageRecords`：`event_id` 存在；`person_id` 存在；`source_kind` 与 `purchase_item_id` 满足第 5.1 节；非空 `purchase_item_id` 指向存在的项目；事件档案、人的档案与来源项目所属购买的档案一致；`single_purchase` 只能指向 `single` 购买的项目，`package_item` 只能指向 `package` 购买的项目；作废字段满足第 4.6 节 CHECK。
 - 事件引用的机构存在或为空。
 - `institutions` 的地点只允许第 4.7 节的 A、B、C 三种组合：省代码与省名称同时为空或同时非空；`city_code` 非空时省代码与省名称都非空；任一代码非空时 `city` 非空白。`beautyEvents` 的四个地点快照列满足第 4.5 节的同类约束。
-- 每个项目的 `active` 使用记录数不超过其 `quantity`。
+- `source_kind` 为 `package_item`、`single_purchase` 或 `deleted_package` 时，`purchase_name_snapshot` 与 `purchase_item_name_snapshot` 均非空白（与第 4.6 节 CHECK 同一口径）。
+- **不**校验「每个项目的 `active` 使用记录数不超过其 `quantity`」：历史超用必须能被本版本导出的备份原样恢复（第 3 节派生值说明）。阻止新增超用是写入路径的职责。
 - 心愿单与收藏的全部现有校验不变。
 - 代码字段只校验非空，**不校验是否存在于当前目录**：来自更新目录版本的代码按第 8.3 节回退显示。
 - `profile_id` 归一仍集中在 `backup-profile-mapping.ts`，扩展到 `people` 与 `beautyEvents`；人、事件与其他业务 ID 一律原样保留。

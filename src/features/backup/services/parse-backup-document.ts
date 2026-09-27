@@ -1,9 +1,11 @@
-import type { BackupDocument } from '../backup-document';
-import { remapToLocalProfile } from '../backup-profile-mapping';
+import type { BackupDocument, BackupDocumentV1 } from '../backup-document';
+import { remapToLocalProfile, remapV1ToLocalProfile } from '../backup-profile-mapping';
 import { BackupError, type BackupFailureStage } from './backup-error';
 import { exceedsBackupSizeLimit, utf8ByteLength } from './backup-file-limits';
+import { convertBackupV1ToV2 } from './convert-backup-v1-to-v2';
 import {
   validateBackupDocument,
+  validateBackupDocumentV2,
   type BackupValidationFailureKind,
 } from './validate-backup-document';
 
@@ -23,11 +25,21 @@ import {
  *    它给出「根本不是备份 / 是备份但内容坏了 / 来自更新版本」三种结论，
  *    对应三句不同的中文。
  * 4. **改写档案 ID**——集中在一个纯函数里完成，见 `backup-profile-mapping`。
+ *    格式 1 的备份在改写之后、于内存中转换为格式 2，再完整校验一遍格式 2 的规则；
+ *    先改写再转换，「自己」的标识才会落在本机档案上（DATA_MODEL_V4 第 11.3 节）。
+ *    原文本不被修改，下游只见到格式 2。
  *
  * 全程不碰数据库，不碰文件系统，不碰网络：一个纯函数，喂什么就判什么，
  * 因此自动化验证里可以直接构造各种坏文件。
  */
-export function parseBackupDocument(text: string): BackupDocument {
+export type ParsedBackup = {
+  /** 格式 2 的文档，档案 ID 已归到本机。格式 1 的文件在这里已经转换完成。 */
+  readonly document: BackupDocument;
+  /** 文件自身的格式版本（1 或 2），供摘要如实展示；转换不改变它。 */
+  readonly sourceFormatVersion: 1 | 2;
+};
+
+export function parseBackupDocument(text: string): ParsedBackup {
   if (exceedsBackupSizeLimit(utf8ByteLength(text))) {
     throw new BackupError('oversize');
   }
@@ -53,7 +65,36 @@ export function parseBackupDocument(text: string): BackupDocument {
     throw new BackupError(VALIDATION_FAILURE_STAGES[validation.kind]);
   }
 
-  return remapToLocalProfile(value as BackupDocument);
+  if (validation.formatVersion === 2) {
+    return { document: remapToLocalProfile(value as BackupDocument), sourceFormatVersion: 2 };
+  }
+  return {
+    document: convertLegacyDocument(remapV1ToLocalProfile(value as BackupDocumentV1)),
+    sourceFormatVersion: 1,
+  };
+}
+
+/** 格式 1 → 格式 2，并对转换结果做一次完整的格式 2 校验。任何一步不过都算内容错误。 */
+function convertLegacyDocument(legacy: BackupDocumentV1): BackupDocument {
+  let converted: BackupDocument;
+  try {
+    converted = convertBackupV1ToV2(legacy);
+  } catch {
+    // 转换错误的说明是固定文案，不含行内容；这里仍然不打印，免得以后有人往里加字段值。
+    if (__DEV__) {
+      console.error('[backup] 格式 1 备份转换失败');
+    }
+    throw new BackupError('validate');
+  }
+
+  const validation = validateBackupDocumentV2(converted);
+  if (!validation.ok) {
+    if (__DEV__) {
+      console.error(`[backup] 格式 1 备份转换后校验未通过（${validation.kind}）`, validation.issues);
+    }
+    throw new BackupError('validate');
+  }
+  return converted;
 }
 
 /**

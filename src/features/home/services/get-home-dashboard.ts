@@ -51,9 +51,8 @@ export async function getHomeDashboard(dataAccess: DataAccess): Promise<HomeDash
   ]);
 
   return {
-    // 理论上不会为负；真为负说明数据异常，界面上仍然只展示 0，
-    // 不把负数余次呈现给用户（E-05：不得允许负数余次）。
-    pendingCount: Math.max(0, totals.total_quantity - totals.active_redemption_count),
+    // 逐项夹到 0 再相加（SQL 里完成），不会出现负数（E-05）。
+    pendingCount: totals.remaining_count,
     totalSpendMinor: totals.total_amount_minor,
     recentRedemptions: recentRows.map((row) => ({
       id: row.id,

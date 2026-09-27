@@ -3,9 +3,10 @@ import {
   type BusinessDate,
   type DataAccess,
   type PurchaseItemCategory,
-  type RedemptionStatus,
+  type UsageStatus,
   type UtcTimestamp,
 } from '@/db';
+import { displayUnitAmountMinor, toFormCategory } from './purchase-item-columns';
 
 /**
  * 套餐详情查询用例。
@@ -39,7 +40,7 @@ export type PurchaseDetailRedemption = {
   /** 核销当时的机构名称快照；未填写机构时为 null */
   readonly institutionName: string | null;
   readonly city: string | null;
-  readonly status: RedemptionStatus;
+  readonly status: UsageStatus;
   readonly notes: string | null;
   /** 撤销时间；仍然有效的记录为 null */
   readonly voidedAt: UtcTimestamp | null;
@@ -96,13 +97,13 @@ export async function getPurchaseDetail(
   const items: PurchaseDetailItem[] = itemRows.map((row) => ({
     id: row.id,
     name: row.name,
-    category: row.category,
+    category: toFormCategory(row.category_code),
     quantity: row.quantity,
     redeemedCount: row.active_redemption_count,
     // 理论上不会为负；真为负说明数据异常，界面上仍然只展示 0，
     // 不把负数余次呈现给用户（E-05：不得允许负数余次）。
     remaining: Math.max(0, row.quantity - row.active_redemption_count),
-    unitAmountMinor: row.unit_amount_minor,
+    unitAmountMinor: displayUnitAmountMinor(row.allocated_amount_minor, row.quantity),
     notes: row.notes,
   }));
 
