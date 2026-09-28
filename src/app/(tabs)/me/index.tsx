@@ -9,10 +9,11 @@ import { Colors, Layout, Radii, TextStyles } from '@/theme';
 /**
  * 我的（静态骨架）。
  *
- * 第一版只有当前用户本人一个档案（ADR-015）：这里不出现档案切换入口、
- * 不出现多档案管理，也不出现其他使用人。
+ * 一个账号只有一个档案（ADR-015 仍有效的部分）：这里不出现档案切换入口，
+ * 也不出现多档案管理。同一档案下可以记录多个使用人（ADR-022、PRD 第 5B.4 节），
+ * 他们只是记录上的名称，不是独立档案。
  *
- * 「数据管理」里机构管理与数据备份是真的可用页面，清除缓存仍是占位。
+ * 「数据管理」里机构管理、使用人管理与数据备份是真的可用页面，清除缓存仍是占位。
  *
  * 页脚是产品信息（名称、阶段、版本与数据去向）。它排在所有入口之后、
  * 不做成卡片，是因为它只回答「这是什么」，不是一个可以操作的功能。
@@ -29,7 +30,7 @@ export default function MeScreen() {
         </View>
         <View style={styles.profileTexts}>
           <Text style={styles.profileName}>个人档案</Text>
-          <Text style={styles.profileHint}>所有套餐与记录都属于本人</Text>
+          <Text style={styles.profileHint}>所有套餐与记录都保存在这个档案里</Text>
         </View>
       </Card>
 
@@ -41,6 +42,12 @@ export default function MeScreen() {
             title="机构管理"
             subtitle="整理套餐和核销中使用过的机构"
             onPress={() => router.push('/(tabs)/me/institutions')}
+          />
+          <ListRow
+            icon="people"
+            title="使用人管理"
+            subtitle="记录套餐的购买人和项目的使用人"
+            onPress={() => router.push('/(tabs)/me/people')}
           />
           <ListRow
             icon="dataExport"

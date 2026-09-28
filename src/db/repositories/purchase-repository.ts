@@ -333,8 +333,9 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
       // 归属不符时更新 0 行，由调用方回滚，而不是先查一次再信任那次查询的结果。
       //
       // SET 列表里没有 beauty_events 与 usage_records 的任何东西。改套餐的机构只改这一行，
-      // 历史事件的机构快照原样不动（PRD-INST-005）。购买类型与购买人在现有编辑页里
-      // 不可改，也不在可写列内。
+      // 历史事件的机构快照原样不动（PRD-INST-005）。购买类型不可改，不在可写列内。
+      // 购买人与其名称快照成对写入：购买人没变时调用方原样带回库里的两列（BT-0020），
+      // 使用记录上的使用人快照不受影响。
       const result = await db.runAsync(
         `UPDATE purchases
             SET institution_id = ?,
@@ -345,6 +346,8 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
                 total_amount_minor = ?,
                 expires_on = ?,
                 notes = ?,
+                purchaser_person_id = ?,
+                purchaser_name_snapshot = ?,
                 updated_at = ?
           WHERE id = ? AND profile_id = ?`,
         [
@@ -356,6 +359,8 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
           row.total_amount_minor,
           row.expires_on,
           row.notes,
+          row.purchaser_person_id,
+          row.purchaser_name_snapshot,
           row.updated_at,
           row.id,
           row.profile_id,

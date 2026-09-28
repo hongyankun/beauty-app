@@ -1,6 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 
 import { BusinessDateField, InlineNotice, TextField } from '@/components/ui';
+import { PersonPicker } from '@/features/people/components/person-picker';
 import { Layout } from '@/theme';
 import type { PurchaseFormController } from '../hooks/use-purchase-form';
 import { allocationGapMessage } from '../services/purchase-allocation';
@@ -27,7 +28,7 @@ export function PurchaseInfoStep({ form }: PurchaseInfoStepProps) {
           tone="neutral"
           message={`这个套餐原本的金额分配与总价不一致：${allocationGapMessage(
             form.historicalGap.original,
-          )}。只改名称、日期、机构或备注可以直接保存；修改总价后需要在下一步补平。`}
+          )}。只改名称、日期、购买人、机构或备注可以直接保存；修改总价后需要在下一步补平。`}
         />
       )}
 
@@ -46,6 +47,16 @@ export function PurchaseInfoStep({ form }: PurchaseInfoStepProps) {
         value={draft.purchaseDate}
         onChange={(value) => form.updateField({ purchaseDate: value })}
         error={errors?.purchaseDate}
+      />
+
+      {/* 购买人不属于金额结构：只改购买人时，历史不平衡的套餐仍可保留原差额保存。 */}
+      <PersonPicker
+        label="购买人"
+        value={draft.purchaser}
+        options={form.personOptions}
+        onChange={(value) => form.updateField({ purchaser: value })}
+        disabled={form.saving}
+        helperText="默认是自己。修改购买人不会改变任何金额"
       />
 
       <InstitutionPicker

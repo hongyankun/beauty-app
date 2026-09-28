@@ -44,6 +44,7 @@ const HISTORY_SELECT = `SELECT
     e.institution_name_snapshot,
     e.city_name_snapshot AS city_snapshot,
     u.notes,
+    u.person_name_snapshot,
     u.created_at,
     u.voided_at,
     u.void_reason
@@ -105,6 +106,7 @@ export function createRedemptionRepository(db: SQLiteDatabase): RedemptionReposi
             e.city_name_snapshot AS city_snapshot,
             u.status,
             u.notes,
+            u.person_name_snapshot,
             u.created_at,
             u.voided_at,
             u.void_reason

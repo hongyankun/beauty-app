@@ -67,6 +67,8 @@ export type RedemptionHistoryEntry = {
   readonly institutionLabel: string;
   /** 核销当时的城市快照；没有值时为 null，整段省略，不补占位 */
   readonly city: string | null;
+  /** 使用当时的使用人名称快照；这个人后来改名或归档都不改写这里 */
+  readonly personName: string;
   readonly notes: string | null;
   readonly createdAt: UtcTimestamp;
   /** 撤销时间；仍然有效的记录为 null */
@@ -130,6 +132,7 @@ export async function listRedemptionHistory(
       // 机构与城市来自核销记录自己的快照列，不是套餐现在的机构（PRD-INST-005）。
       institutionLabel: row.institution_name_snapshot ?? NO_INSTITUTION,
       city: row.city_snapshot,
+      personName: row.person_name_snapshot,
       notes: row.notes,
       createdAt: row.created_at,
       voidedAt: row.voided_at,

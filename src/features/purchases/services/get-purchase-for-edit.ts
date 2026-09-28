@@ -49,6 +49,12 @@ export type PurchaseEditModel = {
   readonly totalAmountMinor: number;
   readonly expiresOn: BusinessDate | null;
   readonly notes: string | null;
+  /** 购买人 ID */
+  readonly purchaserPersonId: string;
+  /** 购买当时的购买人名称快照；编辑页显示它，不显示这个人现在的名称 */
+  readonly purchaserName: string;
+  /** 这个人现在是否已归档；已归档时只能原样保留，不能被重新选中 */
+  readonly purchaserArchived: boolean;
   readonly items: readonly PurchaseEditItem[];
 };
 
@@ -63,6 +69,12 @@ export async function getPurchaseForEdit(
   }
 
   const itemRows = await dataAccess.purchases.listItemsForEdit(purchase.id);
+  // 只用来判断归档状态；名称仍以快照为准。外键保证这个人一定存在，
+  // 万一查不到也按「不可重新选中」处理，与已归档一致。
+  const purchaser = await dataAccess.people.findById(
+    DEFAULT_PROFILE_ID,
+    purchase.purchaser_person_id,
+  );
 
   return {
     id: purchase.id,
@@ -74,6 +86,9 @@ export async function getPurchaseForEdit(
     totalAmountMinor: purchase.total_amount_minor,
     expiresOn: purchase.expires_on,
     notes: purchase.notes,
+    purchaserPersonId: purchase.purchaser_person_id,
+    purchaserName: purchase.purchaser_name_snapshot,
+    purchaserArchived: purchaser === null || purchaser.status !== 'active',
     items: itemRows.map((row) => ({
       id: row.id,
       name: row.name,

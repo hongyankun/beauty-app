@@ -359,6 +359,7 @@ function describeRedemption(redemption: PurchaseDetailRedemption): readonly Dang
   return [
     { label: '项目', value: redemption.itemName },
     { label: '原核销日期', value: redemption.redeemedOn },
+    { label: '使用人', value: redemption.personName },
     {
       label: '机构',
       value: redemption.city === null ? institution : `${institution} · ${redemption.city}`,
@@ -386,6 +387,7 @@ function describeDeletionImpact(impact: PurchaseDeletionImpact): readonly Danger
 function PurchaseSummaryCard({ detail }: { detail: PurchaseDetail }) {
   return (
     <Card style={styles.summary}>
+      <Row label="购买人" value={detail.purchaserName} />
       <Row label="机构" value={detail.institutionName ?? '未填写机构'} />
       {detail.city ? <Row label="城市" value={detail.city} /> : null}
       <Row label="购买日期" value={detail.purchaseDate} />

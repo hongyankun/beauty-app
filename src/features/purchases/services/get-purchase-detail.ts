@@ -44,6 +44,8 @@ export type PurchaseDetailRedemption = {
   /** 核销当时的机构名称快照；未填写机构时为 null */
   readonly institutionName: string | null;
   readonly city: string | null;
+  /** 使用当时的使用人名称快照；这个人后来改名或归档都不影响这里 */
+  readonly personName: string;
   readonly status: UsageStatus;
   readonly notes: string | null;
   /** 撤销时间；仍然有效的记录为 null */
@@ -55,6 +57,8 @@ export type PurchaseDetailRedemption = {
 export type PurchaseDetail = {
   readonly id: string;
   readonly name: string;
+  /** 购买当时的购买人名称快照（PRD 第 5B.5 节），不随这个人改名而变 */
+  readonly purchaserName: string;
   /** 购买当时的机构名称快照；未填写机构时为 null */
   readonly institutionName: string | null;
   readonly city: string | null;
@@ -115,6 +119,7 @@ export async function getPurchaseDetail(
   return {
     id: purchase.id,
     name: purchase.name,
+    purchaserName: purchase.purchaser_name_snapshot,
     institutionName: purchase.institution_name_snapshot,
     city: purchase.city_snapshot,
     purchaseDate: purchase.purchase_date,
@@ -136,6 +141,7 @@ export async function getPurchaseDetail(
       redeemedOn: row.redeemed_on,
       institutionName: row.institution_name_snapshot,
       city: row.city_snapshot,
+      personName: row.person_name_snapshot,
       status: row.status,
       notes: row.notes,
       voidedAt: row.voided_at,

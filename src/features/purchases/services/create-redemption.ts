@@ -19,8 +19,8 @@ import { resolveInstitution, type InstitutionSelection } from './institution-sel
  * 详情页停在后台很久），只有事务内重算的结果才算数（任务书第八、十一节）。
  *
  * schema v4 起一次核销写成**一条变美记录 + 一条使用记录**（ADR-020）：
- * 使用人固定为本档案的「自己」，来源由套餐类型决定。「记录一次变美」的
- * 完整表单属于 BT-0023，这里只保持现有快速核销的行为不变。
+ * 使用人由页面选择、默认「自己」（BT-0020，PRD 第 5B.4 节），来源由套餐类型决定。
+ * 「记录一次变美」的完整表单属于 BT-0023，这里只保持现有快速核销的其余行为不变。
  */
 
 /** 核销来自哪种购买：套餐项目或单次购买（DATA_MODEL_V4 第 7 节）。 */
@@ -31,6 +31,8 @@ const SOURCE_KIND_BY_PURCHASE_KIND = {
 
 export type CreateRedemptionInput = {
   readonly purchaseItemId: string;
+  /** 实际使用人。必填；事务内校验它属于当前档案且仍在使用中 */
+  readonly personId: string;
   /** 核销日期，YYYY-MM-DD */
   readonly redeemedOn: BusinessDate;
   readonly institution: InstitutionSelection;
@@ -80,15 +82,19 @@ export async function createRedemption(
       throw new PurchaseServiceError('这个项目已经没有剩余次数，无法再记录核销');
     }
 
-    // 5. 创建或复用机构，与新增套餐共用同一套判重规则（ADR-014）。
-    const institution = await resolveInstitution(repositories, input.institution, city, now);
-
-    // 6. 使用人是本档案的「自己」，按 (profile_id, is_self = 1) 查，不猜 ID。
-    //    找不到说明库已损坏，宁可拒绝也不凭空造一个人。
-    const self = await repositories.people.findSelf(DEFAULT_PROFILE_ID);
-    if (self === null) {
-      throw new Error('当前档案缺少「自己」');
+    // 5. 使用人。按 (profile_id, id) 在事务内重读：伪造的 ID、其他档案的人与已归档的人
+    //    一律拒绝，且发生在写入任何一行（包括变美记录与新机构）之前，不会留下孤立事件。
+    //    快照取此刻读到的名称，不信任页面上显示的那一份。
+    const person = await repositories.people.findById(DEFAULT_PROFILE_ID, input.personId);
+    if (person === null) {
+      throw new PurchaseServiceError('选择的使用人已经不存在了，请重新选择使用人');
     }
+    if (person.status !== 'active') {
+      throw new PurchaseServiceError('选择的使用人已经归档，请重新选择使用人');
+    }
+
+    // 6. 创建或复用机构，与新增套餐共用同一套判重规则（ADR-014）。
+    const institution = await resolveInstitution(repositories, input.institution, city, now);
 
     // 7. 变美记录的地点快照。城市文字仍取这次填的城市（没填时取机构的城市）；
     //    省市代码只有在这段文字就是机构自己的城市时才从机构复制——
@@ -124,8 +130,8 @@ export async function createRedemption(
       event_id: eventId,
       source_kind: SOURCE_KIND_BY_PURCHASE_KIND[item.purchase_kind],
       purchase_item_id: item.id,
-      person_id: self.id,
-      person_name_snapshot: self.display_name,
+      person_id: person.id,
+      person_name_snapshot: person.display_name,
       category_code_snapshot: item.category_code,
       service_code_snapshot: item.service_code,
       service_name_snapshot: serviceName,

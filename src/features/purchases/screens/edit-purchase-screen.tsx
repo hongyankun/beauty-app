@@ -3,6 +3,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { Alert } from 'react-native';
 
 import { EmptyState, FormScreen, InlineNotice, Screen } from '@/components/ui';
+import type { PersonPickerOption } from '@/features/people/components/person-picker';
+import { usePersonOptions } from '@/features/people/hooks/use-person-options';
 import { useDataAccess } from '@/hooks/use-data-access';
 import { PurchaseCardSkeleton } from '../components/purchase-card-skeleton';
 import {
@@ -44,6 +46,7 @@ export function EditPurchaseScreen() {
   const router = useRouter();
   const { purchaseId } = useLocalSearchParams<{ purchaseId: string }>();
   const { status, model, reload } = usePurchaseEditModel(purchaseId);
+  const people = usePersonOptions();
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) {
@@ -53,7 +56,7 @@ export function EditPurchaseScreen() {
     router.replace({ pathname: '/(tabs)/records/[purchaseId]', params: { purchaseId } });
   }, [router, purchaseId]);
 
-  if (status === 'loading') {
+  if (status === 'loading' || (status === 'ready' && people.status === 'loading')) {
     return (
       <Screen title="编辑套餐" onBack={goBack} backLabel="取消">
         <PurchaseCardSkeleton accessibilityLabel="正在载入这个套餐" />
@@ -88,12 +91,30 @@ export function EditPurchaseScreen() {
     );
   }
 
+  if (people.result === null) {
+    return (
+      <Screen title="编辑套餐" onBack={goBack} backLabel="取消">
+        <InlineNotice
+          tone="warning"
+          message="没能读取使用人，暂时无法编辑。"
+          actionLabel="重试"
+          onActionPress={people.reload}
+        />
+      </Screen>
+    );
+  }
+
   // 载入成功后才挂载表单，并用套餐 ID 作为 key：这样 `initialDraft` 可以在表单
   // 自己的生命周期里只算一次，「有没有改动」的比较基准才是稳定的。
-  return <EditPurchaseForm key={model.id} model={model} />;
+  return <EditPurchaseForm key={model.id} model={model} personOptions={people.result.options} />;
 }
 
-function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
+type EditPurchaseFormProps = {
+  readonly model: PurchaseEditModel;
+  readonly personOptions: readonly PersonPickerOption[];
+};
+
+function EditPurchaseForm({ model, personOptions }: EditPurchaseFormProps) {
   const router = useRouter();
   const dataAccess = useDataAccess();
 
@@ -139,6 +160,7 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
       await updatePurchase(dataAccess, {
         purchaseId: model.id,
         name: input.name,
+        purchaserPersonId: input.purchaserPersonId,
         institution: input.institution,
         city: input.city,
         purchaseDate: input.purchaseDate,
@@ -172,6 +194,7 @@ function EditPurchaseForm({ model }: { model: PurchaseEditModel }) {
     discard: DISCARD_PROMPT,
     minQuantityByKey,
     initialAllocation,
+    personOptions,
   });
 
   const { removeItem } = form;

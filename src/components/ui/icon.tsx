@@ -21,6 +21,7 @@ const ICONS = {
   catalog: { ios: 'book', android: 'menu_book', web: 'menu_book' },
   wishlist: { ios: 'heart', android: 'favorite', web: 'favorite' },
   me: { ios: 'person', android: 'person', web: 'person' },
+  people: { ios: 'person.2', android: 'group', web: 'group' },
   search: { ios: 'magnifyingglass', android: 'search', web: 'search' },
   plus: { ios: 'plus', android: 'add', web: 'add' },
   chevronRight: { ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' },

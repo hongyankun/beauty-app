@@ -198,7 +198,7 @@ repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 
 ### schema v4 与备份 v2（数据层已实现，BT-0022）
 
 > 本小节描述的数据层已由 BT-0022 落地：`MIGRATIONS` 含 migration 1 至 4（migration 4 在 `src/db/migration-004.ts`），导出只写备份 `formatVersion` 2。
-> 变美记录表单、使用人管理、省市与项目选择器接线等**界面仍未实现**（两步式套餐表单已由 BT-0019C 实现），见 [ROADMAP](./ROADMAP.md)。
+> 变美记录表单、省市与项目选择器接线等**界面仍未实现**（两步式套餐表单已由 BT-0019C 实现，使用人管理与购买人 / 快速核销使用人选择已由 BT-0020 实现），见 [ROADMAP](./ROADMAP.md)。
 > 表结构、约束、迁移步骤与备份格式的**规范来源**是 [DATA_MODEL_V4.md](./DATA_MODEL_V4.md)，本节只概括架构层面的边界。
 > 决策依据见 [ADR-020](./DECISIONS.md#adr-020-真实变美记录与套餐资产分离beautyevent--usagerecord套餐只是可选来源) 至 [ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录)。
 
@@ -257,7 +257,7 @@ Profile ─┬─ Person（含唯一的「自己」）
 - v4 由**一条**新迁移（version 4）完成，沿用现有迁移框架：全部建表、搬运数据、自查在**同一个事务**内，最后才设置 `user_version = 4`，任一步失败整体回滚，库保持 v3。
 - 重建顺序兼顾原生（独占事务、外键不生效）与 Web（外键开启、`DROP TABLE` 会级联）：先建 `_v4` 新表并搬运、自查，再按子表在前删除旧表，最后重命名与建索引。
 - `redemption_records` 在迁移中删除，不做双写、不留兼容视图。每条旧核销成为一条变美记录加一条使用记录，二者复用原核销 ID。
-- **现有界面的兼容层**（BT-0022）：v4 表单与页面尚未实现，旧界面通过兼容查询继续工作，页面代码不变。快速核销写入一条变美记录 + 一条来源为套餐的使用记录（使用人为「自己」）；核销历史与套餐详情读使用记录；撤销核销只改那一条使用记录；删除套餐把引用它的使用记录改为「原套餐已删除」并保留快照，不再级联删除。repository 层保留 `redemptions` 这个适配器名称，只是为了不改动旧界面的调用方。
+- **现有界面的兼容层**（BT-0022）：v4 表单与页面尚未实现，旧界面通过兼容查询继续工作，页面代码不变。快速核销写入一条变美记录 + 一条来源为套餐的使用记录（使用人自 BT-0020 起在快速核销中选择，默认「自己」）；核销历史与套餐详情读使用记录；撤销核销只改那一条使用记录；删除套餐把引用它的使用记录改为「原套餐已删除」并保留快照，不再级联删除。repository 层保留 `redemptions` 这个适配器名称，只是为了不改动旧界面的调用方。
 - 套餐表单自 BT-0019C 起直接录入每个项目的分配总额并原样写入 `allocated_amount_minor`，单次均价只在界面上派生、不落库。能否保存由 `purchases/services/purchase-allocation.ts` 的纯函数判断：`update-purchase` 在事务内读取数据库现值作为「原状态」，不信任客户端传来的任何「未改动」标记，界面上的同一判断只用于提前提示。项目分类的合法取值由 service 层校验（v4 的 `category_code` 在数据库只约束非空）；数据库里的未知历史代码在未被修改时原样写回。
 
 **备份 1 / 2 边界**
@@ -308,7 +308,7 @@ Profile ─┬─ Person（含唯一的「自己」）
 ```
 src/
   app/         路由与布局，只放页面文件
-  features/    按业务领域组织的功能模块（当前：purchases、institutions、wishlist、catalog、home、backup）
+  features/    按业务领域组织的功能模块（当前：purchases、institutions、people、wishlist、catalog、home、backup）
   components/  跨 feature 复用的展示组件
   data/        随 App 打包、跨 feature 共用的版本化静态目录（当前：administrative-divisions 行政区目录、service-catalog 项目两级目录）；不进数据库与备份
   services/    网络请求与外部接口封装（尚未建立；feature 内的 service 用例放在各自的 features/*/services/）

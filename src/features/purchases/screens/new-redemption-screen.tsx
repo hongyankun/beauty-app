@@ -5,12 +5,15 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import { BusinessDateField, Button, Card, FormScreen, InlineNotice, TextField } from '@/components/ui';
 import type { InstitutionOption } from '@/db';
+import { PersonPicker, type PersonPickerOption } from '@/features/people/components/person-picker';
+import { usePersonOptions } from '@/features/people/hooks/use-person-options';
 import { useDataAccess } from '@/hooks/use-data-access';
 import { Colors, Layout, TextStyles } from '@/theme';
 import { todayBusinessDate } from '@/utils/business-date';
 import { InstitutionPicker } from '../components/institution-picker';
 import { useInstitutionOptions } from '../hooks/use-institution-options';
 import { useRedemptionTarget } from '../hooks/use-redemption-target';
+import type { PurchaserDraft } from '../purchase-draft';
 import {
   createInitialRedemptionDraft,
   isRedeemedAfterExpiry,
@@ -30,11 +33,15 @@ import type { RedemptionTarget } from '../services/get-redemption-target';
  * 外层只负责把 `purchaseItemId` 换成一份真实的项目上下文；
  * 表单本身在 `RedemptionForm` 里，拿到 target 之后才挂载，
  * 这样「默认日期、默认机构」这些初始值只会被计算一次。
+ *
+ * 使用人必填、默认「自己」（BT-0020，PRD 第 5B.4 节）。「自己」的 ID 要从库里读，
+ * 所以同样等使用人选项读到后才挂载表单。
  */
 export function NewRedemptionScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ purchaseItemId: string; purchaseId?: string }>();
   const { status, target, reload } = useRedemptionTarget(params.purchaseItemId);
+  const people = usePersonOptions();
 
   const cancel = useCallback(() => {
     router.back();
@@ -69,9 +76,32 @@ export function NewRedemptionScreen() {
     );
   }
 
+  if (people.status === 'loading') {
+    return (
+      <FormScreen title="记录一次核销" onCancel={cancel} footer={null}>
+        <Text style={styles.placeholder}>正在载入使用人…</Text>
+      </FormScreen>
+    );
+  }
+
+  if (people.result === null) {
+    return (
+      <FormScreen title="记录一次核销" onCancel={cancel} footer={null}>
+        <InlineNotice
+          tone="warning"
+          message="没能读取使用人，暂时无法记录核销。"
+          actionLabel="重试"
+          onActionPress={people.reload}
+        />
+      </FormScreen>
+    );
+  }
+
   return (
     <RedemptionForm
       target={target}
+      self={{ id: people.result.selfId, name: people.result.selfName, isArchived: false }}
+      personOptions={people.result.options}
       refreshFailed={status === 'error'}
       returnPurchaseId={params.purchaseId ?? target.purchaseId}
       onRefreshTarget={reload}
@@ -81,6 +111,10 @@ export function NewRedemptionScreen() {
 
 type RedemptionFormProps = {
   target: RedemptionTarget;
+  /** 本档案的「自己」，作为使用人的默认值 */
+  self: PurchaserDraft;
+  /** 可选的使用人，只含使用中的人 */
+  personOptions: readonly PersonPickerOption[];
   /** 最近一次刷新失败：下面显示的剩余次数可能不是最新的 */
   refreshFailed: boolean;
   /** 保存成功后要返回的套餐详情。路由参数优先，缺失时用项目自己所属的套餐兜底 */
@@ -90,6 +124,8 @@ type RedemptionFormProps = {
 
 function RedemptionForm({
   target,
+  self,
+  personOptions,
   refreshFailed,
   returnPurchaseId,
   onRefreshTarget,
@@ -101,7 +137,9 @@ function RedemptionForm({
 
   // 初始草稿只算一次。刷新项目信息会换掉 target，但不该把用户已经改过的
   // 日期、机构与备注一起冲掉，也不该让「是否有改动」的基准跟着漂移。
-  const [initialDraft] = useState(() => createInitialRedemptionDraft(target, todayBusinessDate()));
+  const [initialDraft] = useState(() =>
+    createInitialRedemptionDraft(target, todayBusinessDate(), self),
+  );
   const [draft, setDraft] = useState<RedemptionDraft>(initialDraft);
   const [errors, setErrors] = useState<RedemptionFormErrors | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -336,6 +374,16 @@ function RedemptionForm({
           onChange={(value) => updateDraft({ redeemedOn: value })}
           helperText="默认今天"
           error={errors?.redeemedOn}
+        />
+
+        {/* 使用人写进使用记录的快照，之后这个人改名或归档都不改写这一条。 */}
+        <PersonPicker
+          label="使用人"
+          value={draft.person}
+          options={personOptions}
+          onChange={(value) => updateDraft({ person: value })}
+          disabled={saving}
+          helperText="默认是自己。这次项目实际是谁做的"
         />
 
         <InstitutionPicker

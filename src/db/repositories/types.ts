@@ -387,6 +387,9 @@ export type PurchaseUpdate = {
   readonly total_amount_minor: number;
   readonly expires_on: BusinessDate | null;
   readonly notes: string | null;
+  /** 购买人与其名称快照一起写；购买人没变时调用方原样带回库里的两列 */
+  readonly purchaser_person_id: string;
+  readonly purchaser_name_snapshot: string;
   readonly updated_at: UtcTimestamp;
 };
 
@@ -449,6 +452,8 @@ export type RedemptionHistoryRow = {
   readonly city_snapshot: string | null;
   readonly status: UsageStatus;
   readonly notes: string | null;
+  /** 使用人名称快照（记录当时的名称），不是这个人现在的名称 */
+  readonly person_name_snapshot: string;
   readonly created_at: UtcTimestamp;
   /** 撤销时间；`status = 'active'` 时必为空（表级 CHECK 约束） */
   readonly voided_at: UtcTimestamp | null;
@@ -487,6 +492,8 @@ export type RedemptionHistoryEntryRow = {
   readonly institution_name_snapshot: string | null;
   readonly city_snapshot: string | null;
   readonly notes: string | null;
+  /** 使用人名称快照（记录当时的名称），不是这个人现在的名称 */
+  readonly person_name_snapshot: string;
   readonly created_at: UtcTimestamp;
   readonly voided_at: UtcTimestamp | null;
   readonly void_reason: string | null;
@@ -553,13 +560,110 @@ export type RedemptionRepository = {
   countEvents(profileId: string): Promise<number>;
 };
 
-/** 使用人的读取契约。人员管理页面属于 BT-0020，这里只提供兼容层需要的最小能力。 */
+/**
+ * 使用人管理列表里的一行：人员主数据 + 它被引用的真实条数。
+ *
+ * 两个计数都**只认外键**（`purchases.purchaser_person_id`、`usage_records.person_id`），
+ * 不从名称快照反推；使用记录**不按 status 过滤**——已撤销的记录同样引用着这个人，
+ * 同样让它不能被删除（PRD 第 5B.4 节）。计数只用于说明影响范围与决定是否给出删除入口，
+ * 真正挡住删除的是 `deleteIfUnreferenced` 的 SQL 条件。
+ */
+export type PersonUsageRow = {
+  readonly id: string;
+  readonly display_name: string;
+  readonly is_self: SqliteBoolean;
+  readonly status: PersonRow['status'];
+  readonly created_at: UtcTimestamp;
+  readonly updated_at: UtcTimestamp;
+  readonly purchase_count: number;
+  readonly usage_count: number;
+};
+
+/** 选择器需要的最小字段集。 */
+export type PersonOption = {
+  readonly id: string;
+  readonly display_name: string;
+  readonly is_self: SqliteBoolean;
+};
+
+/** 与某个判重键撞上的既有人员，只取提示文案需要的几列。 */
+export type PersonConflictRow = {
+  readonly id: string;
+  readonly display_name: string;
+  readonly is_self: SqliteBoolean;
+  readonly status: PersonRow['status'];
+};
+
 export type PeopleRepository = {
   /**
    * 该档案的「自己」。按 `(profile_id, is_self = 1)` 查找，不依赖固定 ID
    * （DATA_MODEL_V4 第 4.2 节）；不存在时返回 null，由调用方判定为数据异常。
    */
   findSelf(profileId: string): Promise<PersonRow | null>;
+  /** 按 ID 查找，同时校验归属于该档案；不存在时返回 null。 */
+  findById(profileId: string, personId: string): Promise<PersonRow | null>;
+  /**
+   * 当前档案下指定状态的人员及其引用条数。
+   * 排序为 `is_self DESC, updated_at DESC, created_at DESC, id ASC`：「自己」永远在最前，
+   * 第四列保证同一毫秒写入的两条顺序稳定。
+   */
+  listWithUsage(profileId: string, status: PersonRow['status']): Promise<PersonUsageRow[]>;
+  /** 按 ID 读取人员主数据与引用条数，同时校验归属；不存在时返回 null。 */
+  findDetailById(profileId: string, personId: string): Promise<PersonUsageRow | null>;
+  /**
+   * 选择器的候选：当前档案下**使用中**的人，「自己」在最前，其余按名称升序。
+   * 已归档的人不出现在这里（PRD 第 5B.4 节）。
+   */
+  listSelectable(profileId: string): Promise<PersonOption[]>;
+  /**
+   * 在同一档案内查找与 `normalizedName` 相同、但不是 `excludeId` 的人员，**含已归档**。
+   *
+   * `(profile_id, normalized_name)` 上有 UNIQUE 索引兜底；调用方仍应把查找与写入放进
+   * 同一个独占事务，以便在冲突时给出中文说明而不是抛出约束错误。
+   */
+  findConflict(
+    profileId: string,
+    normalizedName: string,
+    excludeId: string | null,
+  ): Promise<PersonConflictRow | null>;
+  /** 插入一个**普通**人员（`is_self = 0`、`status = 'active'`）。「自己」只由迁移创建。 */
+  insertOther(row: {
+    readonly id: string;
+    readonly profile_id: string;
+    readonly display_name: string;
+    readonly normalized_name: string;
+    readonly created_at: UtcTimestamp;
+  }): Promise<void>;
+  /**
+   * 改名，返回实际更新的行数。条件含 `is_self = 0`：即便调用方漏判，「自己」也改不了名。
+   *
+   * 只改 `people` 这一行，**不触及**购买记录与使用记录上的名称快照（PRD 第 5B.5 节）。
+   */
+  updateName(
+    profileId: string,
+    personId: string,
+    displayName: string,
+    normalizedName: string,
+    updatedAt: UtcTimestamp,
+  ): Promise<number>;
+  /**
+   * 把状态从 `from` 改为 `to`，返回实际更新的行数。条件含 `is_self = 0` 与当前状态，
+   * 「自己」永远不会被归档，已经处在目标状态的行以 0 行自证。
+   */
+  setStatus(
+    profileId: string,
+    personId: string,
+    from: PersonRow['status'],
+    to: PersonRow['status'],
+    updatedAt: UtcTimestamp,
+  ): Promise<number>;
+  /**
+   * 删除一个**从未被任何购买记录或使用记录引用过**的普通人员，返回实际删除的行数。
+   *
+   * 「未被引用」写在 SQL 条件里而不是先查后删：独占事务内外键检查不生效，
+   * 只有把条件放进同一条语句才能保证不会删掉被引用的人。调用方必须校验返回值为 1。
+   */
+  deleteIfUnreferenced(profileId: string, personId: string): Promise<number>;
 };
 
 /**

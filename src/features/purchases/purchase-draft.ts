@@ -29,6 +29,19 @@ import type { PurchaseEditModel } from './services/get-purchase-for-edit';
 /** 机构的选择状态。`query` 同时承担搜索关键词与新机构名称两个角色。 */
 export type InstitutionDraftMode = 'none' | 'existing' | 'new';
 
+/**
+ * 草稿里的购买人。
+ *
+ * 名称只用于显示：编辑时是购买当时的快照，新选一个人时是列表里的当前名称。
+ * 真正写进库的快照由 service 在事务内决定，不信任这里的名称。
+ */
+export type PurchaserDraft = {
+  readonly id: string;
+  readonly name: string;
+  /** 已归档的人只能作为原值保留，选择器照常显示并标注「已归档」 */
+  readonly isArchived: boolean;
+};
+
 export type PurchaseItemDraft = {
   /** 仅用于 React key 与错误映射，不入库 */
   readonly key: string;
@@ -44,6 +57,8 @@ export type PurchaseItemDraft = {
 
 export type PurchaseDraft = {
   readonly name: string;
+  /** 购买人，必填，永远有值：新增时默认「自己」，编辑时为库里现有的购买人 */
+  readonly purchaser: PurchaserDraft;
   readonly institutionMode: InstitutionDraftMode;
   readonly institutionId: string | null;
   readonly institutionQuery: string;
@@ -137,10 +152,15 @@ export function createEmptyItemDraft(key: string): PurchaseItemDraft {
   };
 }
 
-/** 初始草稿：购买日期默认今天，项目区默认给出一行空项目（IA 第 3.6.1 节）。 */
-export function createInitialDraft(today: string, firstItemKey: string): PurchaseDraft {
+/** 初始草稿：购买日期默认今天，购买人默认「自己」，项目区默认给出一行空项目（IA 第 3.6.1 节）。 */
+export function createInitialDraft(
+  today: string,
+  firstItemKey: string,
+  purchaser: PurchaserDraft,
+): PurchaseDraft {
   return {
     name: '',
+    purchaser,
     institutionMode: 'none',
     institutionId: null,
     institutionQuery: '',
@@ -165,6 +185,12 @@ export function createInitialDraft(today: string, firstItemKey: string): Purchas
 export function createDraftFromEdit(model: PurchaseEditModel): PurchaseDraft {
   return {
     name: model.name,
+    // 显示购买当时的名称快照；这个人后来改名或归档都不影响这里（快照不回写）。
+    purchaser: {
+      id: model.purchaserPersonId,
+      name: model.purchaserName,
+      isArchived: model.purchaserArchived,
+    },
     // 机构 ID 还在就按「已选中」呈现；只剩快照名说明这条记录的机构已经不在可选列表里，
     // 此时把快照名放进输入框当作一个待确认的新机构名，不假装用户什么都没填过。
     institutionMode:
@@ -402,6 +428,7 @@ export function validatePurchaseDraft(
     ok: true,
     input: {
       name: draft.name.trim(),
+      purchaserPersonId: draft.purchaser.id,
       institution: selection,
       city: optionalText(draft.city),
       purchaseDate: purchaseDate.value,
@@ -520,6 +547,7 @@ function isSameItem(item: PurchaseItemDraft, initial: PurchaseItemDraft): boolea
 export function isDraftDirty(draft: PurchaseDraft, initial: PurchaseDraft): boolean {
   if (
     draft.name !== initial.name ||
+    draft.purchaser.id !== initial.purchaser.id ||
     draft.institutionMode !== initial.institutionMode ||
     draft.institutionId !== initial.institutionId ||
     draft.institutionQuery !== initial.institutionQuery ||

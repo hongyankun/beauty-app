@@ -56,6 +56,7 @@ export function RedemptionHistoryRow({
     `属于套餐 ${entry.purchaseName}`,
     `核销日期 ${entry.redeemedOn}`,
     entry.statusLabel,
+    `使用人 ${entry.personName}`,
     place,
     entry.voidReason === null ? null : `撤销原因 ${entry.voidReason}`,
     purchaseId === null ? null : "查看套餐详情",
@@ -81,6 +82,8 @@ export function RedemptionHistoryRow({
 
       <Text style={styles.meta}>{entry.purchaseName}</Text>
       <Text style={styles.date}>{entry.redeemedOn}</Text>
+      {/* 使用人是使用当时的名称快照，这个人日后改名或归档都不改写这里。 */}
+      <Text style={styles.meta}>使用人：{entry.personName}</Text>
       <Text style={styles.meta}>{place}</Text>
 
       {entry.notes === null ? null : (

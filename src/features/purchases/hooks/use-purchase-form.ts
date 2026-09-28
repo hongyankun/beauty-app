@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
 import type { InstitutionOption } from '@/db';
+import type { PersonPickerOption } from '@/features/people/components/person-picker';
 import { createUuid } from '@/utils/uuid';
 import {
   createEmptyItemDraft,
@@ -74,6 +75,11 @@ export type UsePurchaseFormOptions = {
    * 重新读库后的判断，这里传什么都不能让一个不该保存的分配被保存。
    */
   readonly initialAllocation?: AllocationFacts;
+  /**
+   * 购买人选择器的可选项：只含使用中的人，「自己」在最前。
+   * 由页面读好后传入；草稿里的购买人不在其中（已归档）时照常显示，不被清空。
+   */
+  readonly personOptions: readonly PersonPickerOption[];
 };
 
 export type PurchaseFormStep = 1 | 2;
@@ -94,6 +100,7 @@ export type PurchaseFormController = {
   readonly saveError: string | null;
   readonly saving: boolean;
   readonly institutions: readonly InstitutionOption[];
+  readonly personOptions: readonly PersonPickerOption[];
   /** 第二步摘要卡片的数据 */
   readonly allocation: DraftAllocation;
   /** 编辑历史不平衡的套餐时才有值 */
@@ -382,6 +389,7 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
     saveError,
     saving,
     institutions,
+    personOptions: options.personOptions,
     allocation,
     historicalGap,
     updateField,

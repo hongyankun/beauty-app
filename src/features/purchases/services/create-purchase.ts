@@ -17,11 +17,12 @@ import {
 import { resolveItemIdentity } from './purchase-item-columns';
 import { allocationSaveRejectedMessage, checkAllocationSave } from './purchase-allocation';
 import { PurchaseServiceError } from './errors';
+import { resolvePurchaser } from './purchaser-selection';
 
 /**
  * 新增套餐用例。
  *
- * 一次调用完成「创建或复用机构 + 创建套餐 + 创建全部项目」，整体在一个事务里，
+ * 一次调用完成「创建或复用机构 + 确认购买人 + 创建套餐 + 创建全部项目」，整体在一个事务里，
  * 任意一步失败全部回滚，不会留下半个套餐（ARCHITECTURE 第三节、任务书第七节）。
  */
 
@@ -34,6 +35,8 @@ export type CreatePurchaseItemInput = PurchaseItemFields;
 
 export type CreatePurchaseInput = {
   readonly name: string;
+  /** 购买人。表单默认「自己」；service 在事务内重新校验 */
+  readonly purchaserPersonId: string;
   readonly institution: InstitutionSelection;
   readonly city: string | null;
   readonly purchaseDate: BusinessDate;
@@ -89,22 +92,17 @@ export async function createPurchase(
 
   return dataAccess.transaction(async (repositories) => {
     const institution = await resolveInstitution(repositories, input.institution, city, now);
+    // 购买人在事务内重新确认：同一档案、存在且使用中（PRD 第 5B.4 节）。
+    const purchaser = await resolvePurchaser(repositories, input.purchaserPersonId, null);
     const purchaseId = createUuid();
-
-    // 购买人选择器属于 BT-0020 之后的表单，在那之前购买人一律是本档案的「自己」
-    // （PRD 第 5B.4 节默认值）。按 (profile_id, is_self = 1) 查，找不到说明库已损坏。
-    const self = await repositories.people.findSelf(DEFAULT_PROFILE_ID);
-    if (self === null) {
-      throw new Error('当前档案缺少「自己」');
-    }
 
     await repositories.purchases.insert({
       id: purchaseId,
       profile_id: DEFAULT_PROFILE_ID,
       // 现有表单只录入套餐；「单次」购买只由「记录一次变美」生成（BT-0023）。
       purchase_kind: 'package',
-      purchaser_person_id: self.id,
-      purchaser_name_snapshot: self.display_name,
+      purchaser_person_id: purchaser.personId,
+      purchaser_name_snapshot: purchaser.nameSnapshot,
       institution_id: institution?.id ?? null,
       // 快照在录入当时固化，机构日后改名也不会让旧记录跟着变（PRD-INST-005）。
       institution_name_snapshot: institution?.name ?? null,

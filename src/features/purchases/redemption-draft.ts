@@ -1,6 +1,6 @@
 import { compareBusinessDates, parseBusinessDate } from '@/utils/business-date';
 import { cleanInstitutionName } from '@/utils/institution-name';
-import type { InstitutionDraftMode } from './purchase-draft';
+import type { InstitutionDraftMode, PurchaserDraft } from './purchase-draft';
 import type { CreateRedemptionInput } from './services/create-redemption';
 import type { InstitutionSelection } from './services/institution-selection';
 import type { RedemptionTarget } from './services/get-redemption-target';
@@ -14,6 +14,8 @@ import type { RedemptionTarget } from './services/get-redemption-target';
 
 export type RedemptionDraft = {
   readonly redeemedOn: string;
+  /** 实际使用人，必填，默认「自己」（PRD 第 5B.4 节）。形状与购买人草稿相同 */
+  readonly person: PurchaserDraft;
   readonly institutionMode: InstitutionDraftMode;
   readonly institutionId: string | null;
   readonly institutionQuery: string;
@@ -38,7 +40,7 @@ const DATE_MESSAGES = {
 } as const;
 
 /**
- * 初始草稿：日期默认今天，机构与城市默认继承套餐（PRD-RED-003）。
+ * 初始草稿：日期默认今天，使用人默认「自己」，机构与城市默认继承套餐（PRD-RED-003）。
  *
  * 继承的是套餐的机构**实体**，不是名称文本：这样用户不改机构时，
  * 核销会复用同一条机构记录，而不是按名字重新建一个。
@@ -46,10 +48,12 @@ const DATE_MESSAGES = {
 export function createInitialRedemptionDraft(
   target: RedemptionTarget,
   today: string,
+  self: PurchaserDraft,
 ): RedemptionDraft {
   const hasInstitution = target.institutionId !== null;
   return {
     redeemedOn: today,
+    person: self,
     institutionMode: hasInstitution ? 'existing' : 'none',
     institutionId: target.institutionId,
     institutionQuery: hasInstitution ? (target.institutionName ?? '') : '',
@@ -99,6 +103,7 @@ export function validateRedemptionDraft(
     ok: true,
     input: {
       purchaseItemId,
+      personId: draft.person.id,
       redeemedOn: redeemedOn.value,
       institution: selection,
       city: optionalText(draft.city),
@@ -144,6 +149,7 @@ export function isRedemptionDraftDirty(
 ): boolean {
   return (
     draft.redeemedOn !== initial.redeemedOn ||
+    draft.person.id !== initial.person.id ||
     draft.institutionMode !== initial.institutionMode ||
     draft.institutionId !== initial.institutionId ||
     draft.institutionQuery !== initial.institutionQuery ||

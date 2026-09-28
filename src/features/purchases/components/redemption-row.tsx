@@ -43,6 +43,9 @@ export function RedemptionRow({ redemption, onVoid }: RedemptionRowProps) {
         {redemption.itemName}
       </Text>
 
+      {/* 使用人同样是当时的名称快照：这个人日后改名或归档都不改写这里。 */}
+      <Text style={styles.meta}>使用人：{redemption.personName}</Text>
+
       <Text style={styles.meta}>
         {redemption.institutionName ?? '未填写机构'}
         {redemption.city === null ? '' : ` · ${redemption.city}`}

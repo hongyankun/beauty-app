@@ -9,6 +9,7 @@ import {
 import { createUuid } from '@/utils/uuid';
 import { PurchaseServiceError } from './errors';
 import { resolveInstitution, type InstitutionSelection } from './institution-selection';
+import { resolvePurchaser, type ResolvedPurchaser } from './purchaser-selection';
 import {
   assertHasAtLeastOneItem,
   assertPurchaseBasicsAreValid,
@@ -43,8 +44,9 @@ import {
  * 只有在总价、项目集合、各项目次数与分配金额都没变时才能保留原差额（PRD 第 5B.6 节）。
  * 「变没变」只拿事务内读到的库值比较，不信任客户端传来的任何标记。
  *
- * 购买人与购买类型不在可写范围内：本轮没有购买人选择器（BT-0020 之后才有），
- * 保存时原样保留库里的值。
+ * 购买人可以修改（BT-0020）：没改时 ID 与名称快照原样保留；改了则在事务内确认新的人
+ * 属于当前档案且仍在使用中，快照取那一刻的名称。购买人不属于金额结构，只改购买人的
+ * 不平衡套餐可以保留原差额（PRD 第 5B.6 节）。购买类型不在可写范围内，原样保留。
  */
 
 /** 一行项目。`purchaseItemId` 为 null 表示这是本次新增的项目。 */
@@ -55,6 +57,8 @@ export type UpdatePurchaseItemInput = PurchaseItemFields & {
 export type UpdatePurchaseInput = {
   readonly purchaseId: string;
   readonly name: string;
+  /** 购买人。与库里相同表示没改，原样保留快照 */
+  readonly purchaserPersonId: string;
   readonly institution: InstitutionSelection;
   readonly city: string | null;
   readonly purchaseDate: BusinessDate;
@@ -218,6 +222,7 @@ function assertAllocationIsSavable(
 async function applyChanges(
   repositories: RepositoryBundle,
   input: UpdatePurchaseInput,
+  purchaser: ResolvedPurchaser,
   institutionId: string | null,
   institutionName: string | null,
   city: string | null,
@@ -227,6 +232,8 @@ async function applyChanges(
   const updated = await repositories.purchases.update({
     id: input.purchaseId,
     profile_id: DEFAULT_PROFILE_ID,
+    purchaser_person_id: purchaser.personId,
+    purchaser_name_snapshot: purchaser.nameSnapshot,
     institution_id: institutionId,
     institution_name_snapshot: institutionName,
     city_snapshot: city,
@@ -325,14 +332,18 @@ export async function updatePurchase(
     assertChangesAreSafe(input, existing);
     assertAllocationIsSavable(input, purchase.total_amount_minor, existing);
 
-    // 4. 机构：选已有的会在事务内重新确认存在，新建的按判重键复用，
+    // 4. 购买人：没改则原样保留 ID 与快照；改了则确认同一档案、存在且使用中。
+    const purchaser = await resolvePurchaser(repositories, input.purchaserPersonId, purchase);
+
+    // 5. 机构：选已有的会在事务内重新确认存在，新建的按判重键复用，
     //    规则与新增套餐完全一致（ADR-014）。
     const institution = await resolveInstitution(repositories, input.institution, city, now);
 
-    // 5. 写入。每一步都校验受影响行数，对不上就抛出让事务整体回滚。
+    // 6. 写入。每一步都校验受影响行数，对不上就抛出让事务整体回滚。
     await applyChanges(
       repositories,
       input,
+      purchaser,
       institution?.id ?? null,
       institution?.name ?? null,
       city ?? institution?.city ?? null,
