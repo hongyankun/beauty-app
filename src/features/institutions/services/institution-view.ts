@@ -1,4 +1,5 @@
 import type { InstitutionUsageRow } from '@/db';
+import { formatStoredLocation, type StoredLocation } from './institution-location';
 
 /**
  * 机构行 → 页面可直接渲染的视图模型。
@@ -17,8 +18,13 @@ const STATUS_LABELS = {
 export type InstitutionSummary = {
   readonly id: string;
   readonly name: string;
-  /** 城市；没填时为 null，整段省略，不补占位 */
-  readonly city: string | null;
+  /**
+   * 机构**当前**的地点文字（「广东省 · 深圳市」，或旧机构保存的城市文字）；
+   * 没填时为 null，整段省略，不补占位。历史记录上的地点看各自的快照，不看这里。
+   */
+  readonly locationText: string | null;
+  /** 数据库里的四列原值，编辑页据此预填选择器，未修改时原样保留 */
+  readonly location: StoredLocation;
   /** 备注的首行摘要；没填时为 null */
   readonly notesSummary: string | null;
   readonly isArchived: boolean;
@@ -59,10 +65,17 @@ export function formatUsage(purchaseCount: number, redemptionCount: number): str
 
 export function toInstitutionSummary(row: InstitutionUsageRow): InstitutionSummary {
   const isArchived = row.is_archived === 1;
+  const location: StoredLocation = {
+    province_code: row.province_code,
+    province_name: row.province_name,
+    city_code: row.city_code,
+    city: row.city,
+  };
   return {
     id: row.id,
     name: row.name,
-    city: row.city,
+    locationText: formatStoredLocation(location),
+    location,
     notesSummary: summarizeNotes(row.notes),
     isArchived,
     statusLabel: isArchived ? STATUS_LABELS.archived : STATUS_LABELS.active,

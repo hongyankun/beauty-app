@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
-import { BusinessDateField, InlineNotice, TextField } from '@/components/ui';
+import { BusinessDateField, InlineNotice, ProvinceCityField, TextField } from '@/components/ui';
 import { PersonPicker } from '@/features/people/components/person-picker';
 import { Layout } from '@/theme';
 import type { PurchaseFormController } from '../hooks/use-purchase-form';
@@ -70,12 +70,18 @@ export function PurchaseInfoStep({ form }: PurchaseInfoStepProps) {
         onClear={form.clearInstitution}
       />
 
-      <TextField
-        label="城市"
-        value={draft.city}
-        onChangeText={(value) => form.updateField({ city: value })}
-        placeholder="例如 上海"
-      />
+      {/* 套餐不单独填城市：城市跟随所选机构（PRD 第 5B.9 节）。只有当场新增机构时才选地点，
+          而且名称与已有机构相同时会复用那一家，这里选的地点不会改动它。 */}
+      {draft.institutionMode === 'new' ? (
+        <ProvinceCityField
+          label="新机构地点"
+          value={draft.newInstitutionLocation}
+          onChange={(value) => form.updateField({ newInstitutionLocation: value })}
+          clearable
+          disabled={form.saving}
+          helperText="选填。只在新建这家机构时保存；若已有同名机构，会直接使用它原来的地点。"
+        />
+      ) : null}
 
       <TextField
         label="套餐总价"

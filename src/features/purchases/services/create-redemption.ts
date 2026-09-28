@@ -1,4 +1,5 @@
 import { findServiceByCode } from '@/data/service-catalog';
+import { otherRegionSelection } from '@/data/administrative-divisions';
 import {
   DEFAULT_PROFILE_ID,
   type BusinessDate,
@@ -29,13 +30,21 @@ const SOURCE_KIND_BY_PURCHASE_KIND = {
   single: 'single_purchase',
 } as const satisfies Record<string, UsageSourceKind>;
 
+/**
+ * 核销的机构选择。与套餐共用判重与复用规则，只是「新机构」不带地点：
+ * 核销页没有省市选择器，新机构的地点由这次填的城市文字决定（见下方第 6 步）。
+ */
+export type RedemptionInstitutionSelection =
+  | Exclude<InstitutionSelection, { readonly kind: 'new' }>
+  | { readonly kind: 'new'; readonly name: string };
+
 export type CreateRedemptionInput = {
   readonly purchaseItemId: string;
   /** 实际使用人。必填；事务内校验它属于当前档案且仍在使用中 */
   readonly personId: string;
   /** 核销日期，YYYY-MM-DD */
   readonly redeemedOn: BusinessDate;
-  readonly institution: InstitutionSelection;
+  readonly institution: RedemptionInstitutionSelection;
   readonly city: string | null;
   readonly notes: string | null;
 };
@@ -94,7 +103,14 @@ export async function createRedemption(
     }
 
     // 6. 创建或复用机构，与新增套餐共用同一套判重规则（ADR-014）。
-    const institution = await resolveInstitution(repositories, input.institution, city, now);
+    //    核销页没有省市选择器：当场新增的机构只有这次填的城市文字（状态 A），与接入省市前一致。
+    const institution = await resolveInstitution(
+      repositories,
+      input.institution.kind === 'new'
+        ? { ...input.institution, location: city === null ? null : otherRegionSelection(city) }
+        : input.institution,
+      now,
+    );
 
     // 7. 变美记录的地点快照。城市文字仍取这次填的城市（没填时取机构的城市）；
     //    省市代码只有在这段文字就是机构自己的城市时才从机构复制——

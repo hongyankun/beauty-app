@@ -239,8 +239,6 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
       institutionMode: 'existing',
       institutionId: option.id,
       institutionQuery: option.name,
-      // 城市只在用户还没填时带入，不覆盖已经手填的内容。
-      city: previous.city.trim() === '' ? (option.city ?? '') : previous.city,
     }));
   }, []);
 

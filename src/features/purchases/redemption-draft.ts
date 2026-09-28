@@ -1,8 +1,10 @@
 import { compareBusinessDates, parseBusinessDate } from '@/utils/business-date';
 import { cleanInstitutionName } from '@/utils/institution-name';
 import type { InstitutionDraftMode, PurchaserDraft } from './purchase-draft';
-import type { CreateRedemptionInput } from './services/create-redemption';
-import type { InstitutionSelection } from './services/institution-selection';
+import type {
+  CreateRedemptionInput,
+  RedemptionInstitutionSelection,
+} from './services/create-redemption';
 import type { RedemptionTarget } from './services/get-redemption-target';
 
 /**
@@ -62,7 +64,7 @@ export function createInitialRedemptionDraft(
   };
 }
 
-function toInstitutionSelection(draft: RedemptionDraft): InstitutionSelection {
+function toInstitutionSelection(draft: RedemptionDraft): RedemptionInstitutionSelection {
   if (draft.institutionMode === 'existing' && draft.institutionId !== null) {
     return { kind: 'existing', institutionId: draft.institutionId };
   }

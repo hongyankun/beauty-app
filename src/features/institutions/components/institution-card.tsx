@@ -16,16 +16,16 @@ export type InstitutionCardProps = {
  * 状态同时有文字标签，不靠颜色单独区分（PRD-NFR-005）；已归档用中性浅底 +
  * 细描边，不用大面积警示色——归档不是错误，也不是删除。
  *
- * 每一项独占一行、可自由换行，因此系统字体放到最大档时名称、城市、备注与
+ * 每一项独占一行、可自由换行，因此系统字体放到最大档时名称、地点、备注与
  * 关联条数都是换行而不是被截断（PRD-NFR-006、任务书第十六节）。
  *
- * 整张卡片是一个读屏节点，一次读出名称、城市、状态、关联条数与「编辑机构」，
+ * 整张卡片是一个读屏节点，一次读出名称、地点、状态、关联条数与「编辑机构」，
  * 而不是让用户逐行听散落的碎片。
  */
 export function InstitutionCard({ institution, onPress }: InstitutionCardProps) {
   const label = [
     institution.name,
-    institution.city,
+    institution.locationText,
     institution.statusLabel,
     `关联 ${institution.purchaseCount} 个套餐`,
     `${institution.redemptionCount} 条核销记录`,
@@ -50,8 +50,10 @@ export function InstitutionCard({ institution, onPress }: InstitutionCardProps) 
           </View>
         </View>
 
-        {/* 城市与备注没填时整段省略，不补「未填写」这类占位。 */}
-        {institution.city === null ? null : <Text style={styles.meta}>{institution.city}</Text>}
+        {/* 地点与备注没填时整段省略，不补「未填写」这类占位。 */}
+        {institution.locationText === null ? null : (
+          <Text style={styles.meta}>{institution.locationText}</Text>
+        )}
         {institution.notesSummary === null ? null : (
           <Text style={styles.meta}>{institution.notesSummary}</Text>
         )}

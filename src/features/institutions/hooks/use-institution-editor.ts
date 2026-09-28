@@ -3,9 +3,17 @@ import { usePreventRemove } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 
+import type { ProvinceCitySelection } from '@/data/administrative-divisions';
 import { useDataAccess } from '@/hooks/use-data-access';
 import { toUserMessage } from '../services/errors';
 import type { InstitutionDetail } from '../services/get-institution';
+import {
+  describeStoredLocation,
+  isSameStoredLocation,
+  locationColumnsFromSelection,
+  type LegacyLocation,
+  type StoredLocation,
+} from '../services/institution-location';
 import { setInstitutionArchived } from '../services/set-institution-archived';
 import { updateInstitution } from '../services/update-institution';
 
@@ -29,28 +37,49 @@ const SAVE_FALLBACK = '没能保存这次修改，请重试。你填写的内容
 const ARCHIVE_FALLBACK = '没能归档这个机构，请重试。';
 const RESTORE_FALLBACK = '没能恢复这个机构，请重试。';
 
+/**
+ * 地点草稿。`touched: false` 表示用户没有确认过新的选择、也没有清除——
+ * 这时页面不提交地点，service 原样保留数据库里的四列（包括当前目录不认识的旧值）。
+ */
+export type LocationDraft =
+  | { readonly touched: false }
+  | { readonly touched: true; readonly value: ProvinceCitySelection | null };
+
 export type InstitutionDraft = {
   readonly name: string;
-  readonly city: string;
+  readonly location: LocationDraft;
   readonly notes: string;
 };
 
 function createDraft(detail: InstitutionDetail): InstitutionDraft {
   return {
     name: detail.name,
-    city: detail.city ?? '',
+    location: { touched: false },
     notes: detail.notes ?? '',
   };
 }
 
-function isDirty(draft: InstitutionDraft, initial: InstitutionDraft): boolean {
+/** 用户确认的地点与打开页面时的四列是否不同。选回原值不算改动。 */
+function locationChanged(location: LocationDraft, initial: StoredLocation): boolean {
   return (
-    draft.name !== initial.name || draft.city !== initial.city || draft.notes !== initial.notes
+    location.touched && !isSameStoredLocation(locationColumnsFromSelection(location.value), initial)
+  );
+}
+
+function isDirty(draft: InstitutionDraft, initial: InstitutionDraft, initialLocation: StoredLocation): boolean {
+  return (
+    draft.name !== initial.name ||
+    draft.notes !== initial.notes ||
+    locationChanged(draft.location, initialLocation)
   );
 }
 
 export type InstitutionEditorController = {
   readonly draft: InstitutionDraft;
+  /** 交给选择器的当前值：未修改且库里是与目录一致的 B / C 时为该值，否则为 null */
+  readonly locationValue: ProvinceCitySelection | null;
+  /** 未修改、且库里是旧地点或当前目录不认识的地点时，用于显示与预填 */
+  readonly locationLegacy: LegacyLocation | null;
   /** 机构当前是否已归档。归档或恢复成功后就地更新，不重读整页 */
   readonly isArchived: boolean;
   /** 名称字段的校验提示；没有问题时为 null */
@@ -61,7 +90,7 @@ export type InstitutionEditorController = {
   /** 归档或恢复进行中 */
   readonly changingArchive: boolean;
   readonly changeName: (value: string) => void;
-  readonly changeCity: (value: string) => void;
+  readonly changeLocation: (value: ProvinceCitySelection | null) => void;
   readonly changeNotes: (value: string) => void;
   readonly submit: () => void;
   readonly cancel: () => void;
@@ -79,6 +108,8 @@ export function useInstitutionEditor(detail: InstitutionDetail): InstitutionEdit
    * `detail` 变化重算——重算会把「有没有改动」的比较基准换掉。
    */
   const [initialDraft] = useState(() => createDraft(detail));
+  // 地点的比较基准同样只取一次：页面停留期间重读到的新值不改变「用户有没有改过」。
+  const [initialLocation] = useState<StoredLocation>(() => detail.location);
   const [draft, setDraft] = useState<InstitutionDraft>(initialDraft);
   const [isArchived, setIsArchived] = useState(detail.isArchived);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -129,7 +160,7 @@ export function useInstitutionEditor(detail: InstitutionDetail): InstitutionEdit
    * 一字未改、已经保存成功，或保存与归档恢复正在进行时，都不拦截。
    */
   const preventRemove =
-    isDirty(draft, initialDraft) && !saved && !saving && !changingArchive;
+    isDirty(draft, initialDraft, initialLocation) && !saved && !saving && !changingArchive;
 
   usePreventRemove(preventRemove, ({ data }) => {
     Alert.alert(DISCARD_PROMPT.title, DISCARD_PROMPT.message, [
@@ -162,8 +193,8 @@ export function useInstitutionEditor(detail: InstitutionDetail): InstitutionEdit
     setNameError(null);
   }, []);
 
-  const changeCity = useCallback((value: string) => {
-    setDraft((previous) => ({ ...previous, city: value }));
+  const changeLocation = useCallback((value: ProvinceCitySelection | null) => {
+    setDraft((previous) => ({ ...previous, location: { touched: true, value } }));
   }, []);
 
   const changeNotes = useCallback((value: string) => {
@@ -193,7 +224,11 @@ export function useInstitutionEditor(detail: InstitutionDetail): InstitutionEdit
         await updateInstitution(dataAccess, {
           institutionId: detail.id,
           name: current.name,
-          city: current.city,
+          // 只有真的改了才提交地点；没改就不传，由 service 保留库里此刻的值，
+          // 页面停留期间别处对地点的修改不会被这份旧页面盖掉。
+          ...(current.location.touched && locationChanged(current.location, initialLocation)
+            ? { location: current.location.value }
+            : {}),
           notes: current.notes,
         });
         // 先解除返回拦截再发起返回，否则刚保存成功的用户会被问要不要放弃修改。
@@ -206,7 +241,7 @@ export function useInstitutionEditor(detail: InstitutionDetail): InstitutionEdit
         setSaving(false);
       }
     })();
-  }, [dataAccess, detail.id]);
+  }, [dataAccess, detail.id, initialLocation]);
 
   const cancel = useCallback(() => {
     // 放弃确认统一由 usePreventRemove 处理，这里只负责发起返回。
@@ -225,7 +260,7 @@ export function useInstitutionEditor(detail: InstitutionDetail): InstitutionEdit
       void (async () => {
         try {
           await setInstitutionArchived(dataAccess, detail.id, nextArchived);
-          // 归档与恢复不改名称、城市、备注与关联条数，因此不必重读整页，
+          // 归档与恢复不改名称、地点、备注与关联条数，因此不必重读整页，
           // 就地翻转状态即可；用户正在输入框里改到一半的内容也不会被冲掉。
           setIsArchived(nextArchived);
         } catch (error) {
@@ -241,15 +276,27 @@ export function useInstitutionEditor(detail: InstitutionDetail): InstitutionEdit
     [dataAccess, detail.id],
   );
 
+  // 打开页面时库里的地点只解析一次：它只用于显示与预填，永远不会被原样写回。
+  const [initialLocationView] = useState(() => describeStoredLocation(detail.location));
+  const locationValue = draft.location.touched
+    ? draft.location.value
+    : initialLocationView.kind === 'selection'
+      ? initialLocationView.selection
+      : null;
+  const locationLegacy =
+    !draft.location.touched && initialLocationView.kind === 'legacy' ? initialLocationView.legacy : null;
+
   return {
     draft,
+    locationValue,
+    locationLegacy,
     isArchived,
     nameError,
     actionError,
     saving,
     changingArchive,
     changeName,
-    changeCity,
+    changeLocation,
     changeNotes,
     submit,
     cancel,

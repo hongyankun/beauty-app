@@ -13,7 +13,11 @@ export {
 export { Icon, type IconName, type IconProps } from './icon';
 export { InlineNotice, type InlineNoticeProps, type InlineNoticeTone } from './inline-notice';
 export { ListGroup, ListRow, type ListGroupProps, type ListRowProps } from './list-row';
-export { ProvinceCityField, type ProvinceCityFieldProps } from './province-city-field';
+export {
+  ProvinceCityField,
+  type ProvinceCityFieldProps,
+  type ProvinceCityLegacyValue,
+} from './province-city-field';
 export { Screen, type ScreenProps } from './screen';
 export { SearchField, type SearchFieldProps } from './search-field';
 export { SectionHeader, type SectionHeaderProps } from './section-header';

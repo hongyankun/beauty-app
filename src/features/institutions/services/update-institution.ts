@@ -1,6 +1,13 @@
 import { DEFAULT_PROFILE_ID, type DataAccess } from '@/db';
 import { InstitutionServiceError } from './errors';
 import {
+  INVALID_LOCATION_MESSAGE,
+  prepareLocationForWrite,
+  selectionMatchesStored,
+  type StoredLocation,
+} from './institution-location';
+import type { ProvinceCitySelection } from '@/data/administrative-divisions';
+import {
   conflictMessage,
   MISSING_MESSAGE,
   normalizeOptionalText,
@@ -20,15 +27,23 @@ import {
  * 机构 ID、`profile_id`、`created_at` 与 `is_archived` 都不在可写范围内：
  * ID 不变，历史记录与它的外键关联自然一条都不会断。
  *
- * 结构化地点（schema v4 的省市代码）在省市选择器接线之前（BT-0019B2）没有编辑入口：
- * 城市文字不变时原样保留；城市文字被改掉时一并清空三个代码列——旧代码描述的是
- * 旧城市，留着它会让代码与文字互相矛盾（DATA_MODEL_V4 第 4.7 节）。
+ * 结构化地点（BT-0019B2，DATA_MODEL_V4 第 4.7、12 节）四列一起写，只有三种结果：
+ * - 没有提交 `location`，或提交的值与事务内读到的库里现值四列完全相同：原样保留，
+ *   **不做严格校验**——库里可能是迁移前的城市文字或当前目录不认识的代码，
+ *   用户没动它，就不该因为目录变了而被拒绝保存或被悄悄改写。
+ * - 提交了不同的值：必须通过严格校验，写入的名称取目录当前名称；通不过则整次保存不写入。
+ * - 提交 null：清除，四列全部写成 null。
+ * 「改没改」以事务内读到的库里现值为准，不信任页面上那份打开时的数据。
  */
 
 export type UpdateInstitutionInput = {
   readonly institutionId: string;
   readonly name: string;
-  readonly city: string | null;
+  /**
+   * 用户确认的新地点；null 表示清除。不传（undefined）表示没有修改，原样保留库里的四列。
+   * 类型之外还会在事务内严格校验：页面传来的值不可信。
+   */
+  readonly location?: ProvinceCitySelection | null;
   readonly notes: string | null;
 };
 
@@ -38,7 +53,6 @@ export async function updateInstitution(
 ): Promise<void> {
   // 入参自身的校验不需要读库，放在事务外，省得为一个必然失败的请求开事务。
   const { name, normalizedName } = prepareInstitutionName(input.name);
-  const city = normalizeOptionalText(input.city);
   const notes = normalizeOptionalText(input.notes);
   const now = new Date().toISOString();
 
@@ -70,19 +84,38 @@ export async function updateInstitution(
       }
     }
 
-    // 3. 写入。受影响行数对不上就回滚——它要么已被删除，要么已不属于本档案，
+    // 3. 地点。与库里现值比较，而不是与页面打开时的那一份比较。
+    const current: StoredLocation = {
+      province_code: existing.province_code,
+      province_name: existing.province_name,
+      city_code: existing.city_code,
+      city: existing.city,
+    };
+    let location = current;
+    if (
+      input.location !== undefined &&
+      !selectionMatchesStored(input.location, current)
+    ) {
+      const prepared = prepareLocationForWrite(input.location);
+      if (!prepared.ok) {
+        // 抛出即回滚，名称与备注也不会单独写进去。
+        throw new InstitutionServiceError(INVALID_LOCATION_MESSAGE);
+      }
+      location = prepared.columns;
+    }
+
+    // 4. 写入。受影响行数对不上就回滚——它要么已被删除，要么已不属于本档案，
     //    两种情况都不该把一份过时的输入盖上去。
-    const keepLocation = city === existing.city;
     const changed = await repositories.institutions.updateDetails({
       id: existing.id,
       profile_id: DEFAULT_PROFILE_ID,
       name,
       normalized_name: normalizedName,
-      city,
+      city: location.city,
       notes,
-      province_code: keepLocation ? existing.province_code : null,
-      province_name: keepLocation ? existing.province_name : null,
-      city_code: keepLocation ? existing.city_code : null,
+      province_code: location.province_code,
+      province_name: location.province_name,
+      city_code: location.city_code,
       updated_at: now,
     });
     if (changed !== 1) {

@@ -162,7 +162,6 @@ function EditPurchaseForm({ model, personOptions }: EditPurchaseFormProps) {
         name: input.name,
         purchaserPersonId: input.purchaserPersonId,
         institution: input.institution,
-        city: input.city,
         purchaseDate: input.purchaseDate,
         totalAmountMinor: input.totalAmountMinor,
         expiresOn: input.expiresOn,

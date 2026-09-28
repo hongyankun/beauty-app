@@ -7,6 +7,7 @@ import {
   EmptyState,
   FormScreen,
   InlineNotice,
+  ProvinceCityField,
   Screen,
   TextField,
 } from '@/components/ui';
@@ -19,8 +20,8 @@ import type { InstitutionDetail } from '../services/get-institution';
 /**
  * 编辑一个机构（我的 Tab 栈内的全屏表单）。
  *
- * 只能改名称、城市与备注三项。机构 ID 始终不变，所以它与既有套餐、核销记录
- * 的关联一条都不会断；历史记录里的机构名称与城市快照也不受影响
+ * 只能改名称、地点（省市，BT-0019B2）与备注三项。机构 ID 始终不变，所以它与既有套餐、
+ * 核销记录的关联一条都不会断；历史记录里的机构名称与城市快照也不受影响
  * （PRD-INST-005、PRD-PUR-018，任务书第五、六节）。
  *
  * 归档与恢复也在这一页完成，两者都不删除任何业务数据（任务书第七、八节）。
@@ -102,7 +103,7 @@ function EditInstitutionForm({ detail }: { detail: InstitutionDetail }) {
   return (
     <FormScreen
       title="编辑机构"
-      subtitle="修改机构名称、城市与备注。"
+      subtitle="修改机构名称、地点与备注。"
       onCancel={editor.cancel}
       footer={
         <Button
@@ -135,11 +136,15 @@ function EditInstitutionForm({ detail }: { detail: InstitutionDetail }) {
         error={editor.nameError ?? undefined}
       />
 
-      <TextField
-        label="城市"
-        value={editor.draft.city}
-        onChangeText={editor.changeCity}
-        placeholder="例如：上海"
+      {/* 未修改时原样保留库里的地点，包括当前目录不认识的旧地点；只有确认新选择或清除才会提交。 */}
+      <ProvinceCityField
+        label="地点"
+        value={editor.locationValue}
+        legacy={editor.locationLegacy}
+        onChange={editor.changeLocation}
+        clearable
+        disabled={editor.saving || editor.changingArchive}
+        helperText="从省市目录中选择；找不到时可以选「暂未收录」或「其他地区」后填写。"
       />
 
       <TextField
@@ -152,7 +157,7 @@ function EditInstitutionForm({ detail }: { detail: InstitutionDetail }) {
 
       {/* 任务书第五节要求这句话出现在页面上：改名不回写历史。 */}
       <Text style={styles.notice}>
-        修改只影响以后选择该机构时显示的名称和城市，已有套餐与核销记录会保留当时的信息。
+        修改只影响以后选择该机构时显示的名称和地点，已有套餐与核销记录会保留当时的信息。
       </Text>
 
       {editor.isArchived ? (

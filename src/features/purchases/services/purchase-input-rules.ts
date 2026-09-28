@@ -81,11 +81,11 @@ export function assertHasAtLeastOneItem(itemCount: number): void {
   assertValid(itemCount > 0, '至少添加一个项目');
 }
 
-/** 城市统一清洗：去首尾空格，空串一律当作未填写，避免库里出现 `''` 与 `null` 两种空。 */
-export function normalizeCity(city: string | null): string | null {
-  if (city === null) {
-    return null;
-  }
-  const trimmed = city.trim();
-  return trimmed === '' ? null : trimmed;
+/**
+ * 套餐的城市快照：取所选机构此刻的城市文字（PRD 第 5B.9 节，BT-0019B2）。
+ * 没有机构或城市为空白时为 null，避免库里出现 `''` 与 `null` 两种空。
+ */
+export function cityOf(institution: { readonly city: string | null } | null): string | null {
+  const city = institution?.city?.trim() ?? '';
+  return city === '' ? null : city;
 }

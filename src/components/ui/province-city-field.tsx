@@ -30,6 +30,19 @@ import { Button } from './button';
 import { Icon } from './icon';
 import { TextField } from './text-field';
 
+/**
+ * 已保存、但不能直接当作选择结果显示的旧地点：只有文字的旧机构、当前目录不认识的代码，
+ * 或名称与当前目录不同的代码。它只用于**显示与预填**，永远不会被 `onChange` 原样交回。
+ */
+export type ProvinceCityLegacyValue = {
+  /** 按保存时的文字显示，不重新计算 */
+  readonly text: string;
+  /** 说明这是什么状态，例如「历史地点 · 当前目录未收录」 */
+  readonly note: string;
+  /** 打开弹层时预填的草稿；目录里定位不到时为 null，从第一级重新选 */
+  readonly seed: ProvinceCitySelection | null;
+};
+
 export type ProvinceCityFieldProps = {
   /** 可见标签，同时是读屏标签与弹层标题的一部分 */
   label: string;
@@ -45,6 +58,11 @@ export type ProvinceCityFieldProps = {
   error?: string;
   helperText?: string;
   accessibilityHint?: string;
+  /**
+   * `value` 为 null 时要显示的旧地点。只影响显示、预填与「清除地区」是否出现；
+   * 用户确认新的选择或清除之前，调用方应当原样保留数据库里的值。
+   */
+  legacy?: ProvinceCityLegacyValue | null;
 };
 
 type Step = 'province' | 'city' | 'other';
@@ -158,6 +176,7 @@ export function ProvinceCityField({
   error,
   helperText,
   accessibilityHint = '双击选择省份和城市',
+  legacy = null,
 }: ProvinceCityFieldProps) {
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
@@ -171,7 +190,7 @@ export function ProvinceCityField({
       return;
     }
     confirmedRef.current = false;
-    setDraft(draftFromValue(value));
+    setDraft(draftFromValue(value ?? legacy?.seed ?? null));
     setOpen(true);
   }
 
@@ -241,8 +260,16 @@ export function ProvinceCityField({
     AccessibilityInfo.announceForAccessibility('已返回省级地区列表');
   }
 
-  const displayText = value === null ? '请选择省市' : formatProvinceCitySelection(value);
-  const spokenValue = value === null ? '未设置' : formatProvinceCitySelection(value);
+  const shownLegacy = value === null ? legacy : null;
+  const displayText =
+    value !== null ? formatProvinceCitySelection(value) : shownLegacy !== null ? shownLegacy.text : '请选择省市';
+  const spokenValue =
+    value !== null
+      ? formatProvinceCitySelection(value)
+      : shownLegacy !== null
+        ? `${shownLegacy.text}，${shownLegacy.note}`
+        : '未设置';
+  const hasValue = value !== null || shownLegacy !== null;
   const requirementText = required ? '（必填）' : '（选填）';
   const borderColor = error ? Colors.coral : open ? Colors.mintStrong : Colors.borderLight;
 
@@ -276,10 +303,15 @@ export function ProvinceCityField({
           pressed && !disabled ? styles.triggerPressed : null,
           disabled ? styles.triggerDisabled : null,
         ]}>
-        <Text style={[styles.value, value === null ? styles.placeholder : null]}>{displayText}</Text>
+        <Text style={[styles.value, hasValue ? null : styles.placeholder]}>{displayText}</Text>
         <Icon name="chevronRight" size={20} color={Colors.textSecondary} />
       </Pressable>
 
+      {shownLegacy !== null ? (
+        <Text style={styles.hint} importantForAccessibility="no">
+          {shownLegacy.note}
+        </Text>
+      ) : null}
       {error ? (
         <Text style={styles.error} accessibilityRole="alert">
           {error}
@@ -287,7 +319,7 @@ export function ProvinceCityField({
       ) : null}
       {helperText ? <Text style={styles.hint}>{helperText}</Text> : null}
 
-      {clearable && !required && value !== null && !disabled ? (
+      {clearable && !required && hasValue && !disabled ? (
         <View style={styles.clearRow}>
           <Button
             label="清除地区"

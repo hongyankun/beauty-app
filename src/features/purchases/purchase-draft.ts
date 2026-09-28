@@ -1,4 +1,9 @@
+import { otherRegionSelection, type ProvinceCitySelection } from '@/data/administrative-divisions';
 import type { PurchaseItemCategory } from '@/db';
+import {
+  locationColumnsFromSelection,
+  selectionMatchesStored,
+} from '@/features/institutions/services/institution-location';
 import { compareBusinessDates, parseBusinessDate } from '@/utils/business-date';
 import { cleanInstitutionName } from '@/utils/institution-name';
 import { formatMinorForInput, parseYuanToMinor } from '@/utils/money';
@@ -62,7 +67,11 @@ export type PurchaseDraft = {
   readonly institutionMode: InstitutionDraftMode;
   readonly institutionId: string | null;
   readonly institutionQuery: string;
-  readonly city: string;
+  /**
+   * 当场新增机构时，新机构的地点（BT-0019B2）。只在「新机构」模式下提交，而且只在
+   * 真的新建了机构时写入；套餐自己不再填城市，城市快照跟随所选机构。
+   */
+  readonly newInstitutionLocation: ProvinceCitySelection | null;
   readonly purchaseDate: string;
   readonly totalAmount: string;
   readonly expiresOn: string;
@@ -164,7 +173,7 @@ export function createInitialDraft(
     institutionMode: 'none',
     institutionId: null,
     institutionQuery: '',
-    city: '',
+    newInstitutionLocation: null,
     purchaseDate: today,
     totalAmount: '',
     expiresOn: '',
@@ -197,7 +206,12 @@ export function createDraftFromEdit(model: PurchaseEditModel): PurchaseDraft {
       model.institutionId !== null ? 'existing' : model.institutionName !== null ? 'new' : 'none',
     institutionId: model.institutionId,
     institutionQuery: model.institutionName ?? '',
-    city: model.city ?? '',
+    // 旧数据只剩快照名时，保存会按这个名称新建（或复用）机构；新建时沿用套餐原来的城市文字，
+    // 与接入省市之前的做法一致，不按文字猜省市代码。
+    newInstitutionLocation:
+      model.institutionId === null && model.institutionName !== null
+        ? otherRegionSelection(model.city ?? '')
+        : null,
     purchaseDate: model.purchaseDate,
     totalAmount: formatMinorForInput(model.totalAmountMinor),
     expiresOn: model.expiresOn ?? '',
@@ -241,7 +255,11 @@ function toInstitutionSelection(draft: PurchaseDraft): InstitutionSelection {
     return { kind: 'existing', institutionId: draft.institutionId };
   }
   if (draft.institutionMode === 'new') {
-    return { kind: 'new', name: cleanInstitutionName(draft.institutionQuery) };
+    return {
+      kind: 'new',
+      name: cleanInstitutionName(draft.institutionQuery),
+      location: draft.newInstitutionLocation,
+    };
   }
   return { kind: 'none' };
 }
@@ -430,7 +448,6 @@ export function validatePurchaseDraft(
       name: draft.name.trim(),
       purchaserPersonId: draft.purchaser.id,
       institution: selection,
-      city: optionalText(draft.city),
       purchaseDate: purchaseDate.value,
       totalAmountMinor: totalAmount.minor,
       expiresOn,
@@ -551,7 +568,10 @@ export function isDraftDirty(draft: PurchaseDraft, initial: PurchaseDraft): bool
     draft.institutionMode !== initial.institutionMode ||
     draft.institutionId !== initial.institutionId ||
     draft.institutionQuery !== initial.institutionQuery ||
-    draft.city !== initial.city ||
+    !selectionMatchesStored(
+      draft.newInstitutionLocation,
+      locationColumnsFromSelection(initial.newInstitutionLocation),
+    ) ||
     draft.purchaseDate !== initial.purchaseDate ||
     draft.totalAmount !== initial.totalAmount ||
     draft.expiresOn !== initial.expiresOn ||

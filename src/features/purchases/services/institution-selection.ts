@@ -3,6 +3,11 @@ import {
   type InstitutionRow,
   type RepositoryBundle,
 } from '@/db';
+import type { ProvinceCitySelection } from '@/data/administrative-divisions';
+import {
+  INVALID_LOCATION_MESSAGE,
+  prepareLocationForWrite,
+} from '@/features/institutions/services/institution-location';
 import { cleanInstitutionName, normalizeInstitutionName } from '@/utils/institution-name';
 import { createUuid } from '@/utils/uuid';
 import { PurchaseServiceError } from './errors';
@@ -19,7 +24,15 @@ import { PurchaseServiceError } from './errors';
 export type InstitutionSelection =
   | { readonly kind: 'none' }
   | { readonly kind: 'existing'; readonly institutionId: string }
-  | { readonly kind: 'new'; readonly name: string };
+  | {
+      readonly kind: 'new';
+      readonly name: string;
+      /**
+       * 新机构的地点（BT-0019B2）；null 表示不填。只在**真的新建**机构时使用：
+       * 名称命中已有或已归档的机构时整段忽略，不改对方的地点。
+       */
+      readonly location: ProvinceCitySelection | null;
+    };
 
 /**
  * 在事务内把机构选择落成一条真实的机构行。
@@ -32,8 +45,10 @@ export type InstitutionSelection =
  * 同名机构（PRD 第 5A.3 节）：用户重新用起这个名字，本来就意味着它又在用了，
  * 而新建一条会让同一家店的历史被劈成两半。
  *
- * `city` 只在**新建**机构时作为它的城市写入；复用已有机构（含刚恢复的）时
- * 不会去改对方的名称与城市——主数据只在机构管理中心里改。
+ * `selection.location` 只在**新建**机构时写入：先严格校验，写入的省市名称取目录当前名称，
+ * 通不过就抛出，整个事务（包括套餐或核销）一起回滚。复用已有机构（含刚恢复的）时
+ * 不会去改对方的名称与地点——主数据只在机构管理中心里改，同名复用不能成为
+ * 悄悄覆盖别人地点的后门（BT-0019B2）。
  *
  * 任何分支都不写 `purchases` 与 `beauty_events` 上的机构快照：
  * 那两份文本由调用方按「这一次购买/核销当时叫什么」单独落库。
@@ -41,7 +56,6 @@ export type InstitutionSelection =
 export async function resolveInstitution(
   repositories: RepositoryBundle,
   selection: InstitutionSelection,
-  city: string | null,
   now: string,
 ): Promise<InstitutionRow | null> {
   if (selection.kind === 'none') {
@@ -75,20 +89,24 @@ export async function resolveInstitution(
     return reusable.is_archived === 1 ? await restoreForReuse(repositories, reusable, now) : reusable;
   }
 
+  const location = prepareLocationForWrite(selection.location);
+  if (!location.ok) {
+    throw new PurchaseServiceError(INVALID_LOCATION_MESSAGE);
+  }
+
   const created: InstitutionRow = {
     id: createUuid(),
     profile_id: DEFAULT_PROFILE_ID,
     name,
     normalized_name: normalizedName,
-    city,
+    city: location.columns.city,
     notes: null,
     is_archived: 0,
     created_at: now,
     updated_at: now,
-    // 省市选择器尚未接到表单上（BT-0019B2），当场新增的机构只有城市文字。
-    province_code: null,
-    province_name: null,
-    city_code: null,
+    province_code: location.columns.province_code,
+    province_name: location.columns.province_name,
+    city_code: location.columns.city_code,
   };
   await repositories.institutions.insert(created);
   return created;
@@ -97,7 +115,7 @@ export async function resolveInstitution(
 /**
  * 把一条已归档的机构恢复成使用中，并返回恢复后的行。
  *
- * 恢复只动 `is_archived` 与 `updated_at`：ID、创建时间、名称、城市、备注
+ * 恢复只动 `is_archived` 与 `updated_at`：ID、创建时间、名称、地点、备注
  * 全部保持原样，历史记录与它的关联自然也一个都不变。
  *
  * 这里不做 `normalized_name` 冲突判断：调用方是按这个键找到它的，

@@ -14,10 +14,11 @@ import {
   assertHasAtLeastOneItem,
   assertPurchaseBasicsAreValid,
   assertPurchaseItemIsValid,
-  normalizeCity,
+  cityOf,
   type PurchaseItemFields,
 } from './purchase-input-rules';
 import { resolveItemIdentity } from './purchase-item-columns';
+import { normalizeInstitutionName } from '@/utils/institution-name';
 import {
   allocationSaveRejectedMessage,
   checkAllocationSave,
@@ -44,6 +45,10 @@ import {
  * 只有在总价、项目集合、各项目次数与分配金额都没变时才能保留原差额（PRD 第 5B.6 节）。
  * 「变没变」只拿事务内读到的库值比较，不信任客户端传来的任何标记。
  *
+ * 机构快照（BT-0019B2）：机构**没换**时，套餐的机构名称与城市快照原样保留——
+ * 机构后来改名、改地点，不会因为用户顺手改了套餐备注就被写进这个套餐。
+ * 换了机构时，名称与城市快照取新机构在事务内此刻的值；套餐不存省市代码。
+ *
  * 购买人可以修改（BT-0020）：没改时 ID 与名称快照原样保留；改了则在事务内确认新的人
  * 属于当前档案且仍在使用中，快照取那一刻的名称。购买人不属于金额结构，只改购买人的
  * 不平衡套餐可以保留原差额（PRD 第 5B.6 节）。购买类型不在可写范围内，原样保留。
@@ -59,8 +64,8 @@ export type UpdatePurchaseInput = {
   readonly name: string;
   /** 购买人。与库里相同表示没改，原样保留快照 */
   readonly purchaserPersonId: string;
+  /** 当场新增机构时，新机构的地点随选择一起带上；套餐自己不再单独填写城市（BT-0019B2） */
   readonly institution: InstitutionSelection;
-  readonly city: string | null;
   readonly purchaseDate: BusinessDate;
   /** 套餐总价，整数分 */
   readonly totalAmountMinor: number;
@@ -218,14 +223,46 @@ function assertAllocationIsSavable(
   }
 }
 
+type InstitutionSnapshots = {
+  readonly institutionName: string | null;
+  readonly city: string | null;
+};
+
+/**
+ * 这次保存是否「没换机构」。只拿事务内读到的套餐行判断，不信任页面传来的标记。
+ *
+ * - 解析出的机构 ID 与套餐现在关联的相同：没换。
+ * - 套餐原本没有关联机构 ID、却有机构名称快照（迁移前的旧数据）：编辑页会把它预填成
+ *   「新机构」并带上同一个名称，保存时才第一次关联到一条机构行。只要名称按判重规则相同，
+ *   就仍然是同一家店，快照不变。
+ * - 其余情况（改选了别的机构、清空机构、从无到有）：换了。
+ */
+function isSameInstitution(
+  purchase: { readonly institution_id: string | null; readonly institution_name_snapshot: string | null },
+  selection: InstitutionSelection,
+  resolvedId: string | null,
+): boolean {
+  if (resolvedId === null) {
+    // 清空机构时快照随之清空，与「从来没填过」一致。
+    return purchase.institution_id === null && purchase.institution_name_snapshot === null;
+  }
+  if (purchase.institution_id !== null) {
+    return purchase.institution_id === resolvedId;
+  }
+  return (
+    selection.kind === 'new' &&
+    purchase.institution_name_snapshot !== null &&
+    normalizeInstitutionName(selection.name) === normalizeInstitutionName(purchase.institution_name_snapshot)
+  );
+}
+
 /** 按输入写库。调用方保证已经在事务内，并且校验全部通过。 */
 async function applyChanges(
   repositories: RepositoryBundle,
   input: UpdatePurchaseInput,
   purchaser: ResolvedPurchaser,
   institutionId: string | null,
-  institutionName: string | null,
-  city: string | null,
+  snapshots: InstitutionSnapshots,
   existing: ReadonlyMap<string, PurchaseItemEditRow>,
   now: string,
 ): Promise<void> {
@@ -235,8 +272,8 @@ async function applyChanges(
     purchaser_person_id: purchaser.personId,
     purchaser_name_snapshot: purchaser.nameSnapshot,
     institution_id: institutionId,
-    institution_name_snapshot: institutionName,
-    city_snapshot: city,
+    institution_name_snapshot: snapshots.institutionName,
+    city_snapshot: snapshots.city,
     name: input.name.trim(),
     purchase_date: input.purchaseDate,
     total_amount_minor: input.totalAmountMinor,
@@ -315,7 +352,6 @@ export async function updatePurchase(
   assertInputIsValid(input);
 
   const now = new Date().toISOString();
-  const city = normalizeCity(input.city);
 
   await dataAccess.transaction(async (repositories) => {
     // 1. 事务内重新确认套餐存在且属于当前档案。
@@ -337,7 +373,10 @@ export async function updatePurchase(
 
     // 5. 机构：选已有的会在事务内重新确认存在，新建的按判重键复用，
     //    规则与新增套餐完全一致（ADR-014）。
-    const institution = await resolveInstitution(repositories, input.institution, city, now);
+    const institution = await resolveInstitution(repositories, input.institution, now);
+    const snapshots: InstitutionSnapshots = isSameInstitution(purchase, input.institution, institution?.id ?? null)
+      ? { institutionName: purchase.institution_name_snapshot, city: purchase.city_snapshot }
+      : { institutionName: institution?.name ?? null, city: cityOf(institution) };
 
     // 6. 写入。每一步都校验受影响行数，对不上就抛出让事务整体回滚。
     await applyChanges(
@@ -345,8 +384,7 @@ export async function updatePurchase(
       input,
       purchaser,
       institution?.id ?? null,
-      institution?.name ?? null,
-      city ?? institution?.city ?? null,
+      snapshots,
       existing,
       now,
     );

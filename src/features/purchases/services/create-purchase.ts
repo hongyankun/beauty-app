@@ -11,7 +11,7 @@ import {
   assertHasAtLeastOneItem,
   assertPurchaseBasicsAreValid,
   assertPurchaseItemIsValid,
-  normalizeCity,
+  cityOf,
   type PurchaseItemFields,
 } from './purchase-input-rules';
 import { resolveItemIdentity } from './purchase-item-columns';
@@ -37,8 +37,8 @@ export type CreatePurchaseInput = {
   readonly name: string;
   /** 购买人。表单默认「自己」；service 在事务内重新校验 */
   readonly purchaserPersonId: string;
+  /** 当场新增机构时，新机构的地点随选择一起带上；套餐自己不再单独填写城市（BT-0019B2） */
   readonly institution: InstitutionSelection;
-  readonly city: string | null;
   readonly purchaseDate: BusinessDate;
   /** 套餐总价，整数分 */
   readonly totalAmountMinor: number;
@@ -88,10 +88,9 @@ export async function createPurchase(
   assertInputIsValid(input);
 
   const now = new Date().toISOString();
-  const city = normalizeCity(input.city);
 
   return dataAccess.transaction(async (repositories) => {
-    const institution = await resolveInstitution(repositories, input.institution, city, now);
+    const institution = await resolveInstitution(repositories, input.institution, now);
     // 购买人在事务内重新确认：同一档案、存在且使用中（PRD 第 5B.4 节）。
     const purchaser = await resolvePurchaser(repositories, input.purchaserPersonId, null);
     const purchaseId = createUuid();
@@ -104,9 +103,10 @@ export async function createPurchase(
       purchaser_person_id: purchaser.personId,
       purchaser_name_snapshot: purchaser.nameSnapshot,
       institution_id: institution?.id ?? null,
-      // 快照在录入当时固化，机构日后改名也不会让旧记录跟着变（PRD-INST-005）。
+      // 快照在录入当时固化，机构日后改名、改地点也不会让旧记录跟着变（PRD-INST-005）。
+      // 城市快照只取所选机构此刻的城市文字，套餐不存省市代码（PRD 第 5B.9 节）。
       institution_name_snapshot: institution?.name ?? null,
-      city_snapshot: city ?? institution?.city ?? null,
+      city_snapshot: cityOf(institution),
       name: input.name.trim(),
       purchase_date: input.purchaseDate,
       total_amount_minor: input.totalAmountMinor,
