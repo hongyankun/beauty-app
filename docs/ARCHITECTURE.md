@@ -240,7 +240,7 @@ Profile ─┬─ Person（含唯一的「自己」）
 - **严格校验的边界**：`isValidProvinceCitySelection` 按目录**当前**名称判定，只用于从当前选择器新选出的地点、用户主动修改地点后的写入前校验，以及确认标准城市属于所选省份。它**不用于** App 启动时重新校验库中已有地点、显示旧记录与机构 / 套餐 / 变美记录的历史地点快照、备份 v1 / v2 的通用结构校验、从备份恢复旧地点，也不用于因目录更新批量改写名称快照。目录更新、改名、停用代码或旧版本 App 存下了未知代码时，已有数据按保存时的名称快照照常显示，不删除、不清空、不拒绝加载、不自动改写；只有用户主动重新选择时才写入当前标准代码与名称。「已保存的值 → 选择器草稿」的适配（认识的代码按代码定位、名称不同不清空；未知代码保留并显示原文字、不猜测映射）由 BT-0019B2 设计并验收。
 - 运行时完全离线；目录不进数据库、不进备份。schema v4 已为机构提供省市代码列（BT-0022）。BT-0019B2 已把选择器接入编辑机构与套餐表单：数据库四列与选择结果之间的适配在 `src/features/institutions/services/institution-location.ts`，读永远宽松（旧值照常显示、不抛错），写永远严格（`prepareLocationForWrite` 调用 `isValidProvinceCitySelection` 并由目录重新构造名称）；是否修改由 service 在事务内对照库里现值判断，未修改则原样保留。
 
-**项目两级静态目录（BT-0021A，已实现，待产品内容审核，尚未接线）**
+**项目两级静态目录（BT-0021A，已实现，待产品内容审核；BT-0021B 已接入套餐项目）**
 
 - 位置 `src/data/service-catalog/`：`categories.ts` 为七个冻结的一级分类，`services.ts` 为二级条目（手工维护），`metadata.ts` 记录版本、定位与来源，`helpers.ts` 为查询、选择结果构造、旧名称映射与搜索的纯函数，`validate-catalog.ts` 在开发环境加载时做完整性检查、有问题直接抛错。不依赖 React Native、数据库或网络，也不从 `src/components/ui` 导出。条目清单、取舍与审核事项见 [SERVICE_CATALOG_V1.md](./SERVICE_CATALOG_V1.md)。
 - 版本字段 `catalogVersion`，当前为 `svc-2026.1`；数据有任何变化都升级版本，旧版本号不复用。
@@ -250,7 +250,8 @@ Profile ─┬─ Person（含唯一的「自己」）
 - **别名与旧名称分开**：只有标准显示名称或经审核并冻结的 legacyExactNames，在归一化后精确且唯一命中时才允许自动映射；普通 aliases 只用于搜索，不参与迁移。映射另要求目标启用，不做包含、拼音、错别字或模糊匹配，命中不了就保持自定义。`displayName` 不含品牌；品牌名与市场俗称可以进 `aliases`，只有经产品审核后才能进 `legacyExactNames`。显示名称与旧名称的比较键全局唯一，迁移索引有一个稳定摘要（`serviceMigrationDigest`），增删别名不改变它。搜索只给候选，不自动选中。
 - **跨分类白名单**：旧项目默认只能在相同一级分类内，通过标准显示名称或经审核的 legacyExactNames 精确且唯一映射。只有冻结在 legacyCrossCategoryMappings 中的明确历史例外，才允许跨一级分类迁移。首版唯一例外是旧中胚层微针分类下的'射频微针'和'黄金微针'，迁移到光电类射频微针。白名单在 `legacy-cross-category.ts`（常量 `LEGACY_CROSS_CATEGORY_MAPPINGS`），匹配顺序为同分类精确匹配 → 白名单 → 自定义名称；完整性检查要求键唯一、目标在用且与旧分类不同、旧分类不是「其他」、旧名称已是目标条目的名称或旧名称。白名单用于旧数据库 migration 和 v1 备份升级转换，但不用于 v2 备份的常规恢复或历史快照重校验。迁移与 v1 → v2 转换调用同一个纯函数；白名单另有独立摘要（`legacyCrossCategoryDigest`）。
 - **严格校验的边界**：`isValidNewServiceSelection` 只用于从当前选择器新选出的项目、用户主动修改项目后的写入前校验（代码必须存在、在用、属于所选分类；自定义名称非空且已清洗；两者不能同时有值）。它**不用于**加载与显示已有记录、备份的通用结构校验、从备份恢复，也不用于因目录更新批量改写快照；已有数据里的停用或未知代码照常按快照显示，不拒绝、不清空、不自动改写。
-- 迁移映射已由 BT-0022 落地：migration 4 与 v1 → v2 备份转换共用 `src/db/legacy-mapping/` 中的同一个纯函数（内部调用本目录的旧名称映射）。当前没有任何页面使用它，选择器与接线由 BT-0021B 完成。
+- 迁移映射已由 BT-0022 落地：migration 4 与 v1 → v2 备份转换共用 `src/db/legacy-mapping/` 中的同一个纯函数（内部调用本目录的旧名称映射）。
+- BT-0021B 已把选择器接入新增与编辑套餐（已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）：库里三列（`category_code`、`service_code`、`custom_name`）与选择结果之间的适配集中在 `src/features/purchases/services/purchase-item-columns.ts`。读永远宽松（`identityFromColumns` 原样照搬，未知分类按「其他」显示、停用或未知代码标注，不抛错）；写永远严格（`resolveItemIdentity` 对新选择调用 `isValidNewServiceSelection`）；编辑时是否修改由 service 在事务内对照库里现值判断，三列完全相同则原样写回，包括停用、未知与旧数据中两者都有值的组合。新增的自定义项目，显示名称必须等于 `custom_name`（`assertNewItemNameMatchesIdentity`，只用于新增的行；BT-0021BA 审计补上）。选择器组件不含 SQL 与路由。心愿单不接入。
 
 **schema 3 / 4 边界**
 

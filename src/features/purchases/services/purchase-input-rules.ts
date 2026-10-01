@@ -1,7 +1,8 @@
-import { PURCHASE_ITEM_CATEGORIES, type BusinessDate, type PurchaseItemCategory } from '@/db';
+import type { BusinessDate } from '@/db';
 import { compareBusinessDates, isBusinessDate } from '@/utils/business-date';
 import { MAX_AMOUNT_MINOR } from '@/utils/money';
 import { PurchaseServiceError } from './errors';
+import type { PurchaseItemIdentity } from './purchase-item-columns';
 
 /**
  * 新增与编辑套餐共用的 service 层字段规则。
@@ -26,8 +27,10 @@ export type PurchaseBasicsInput = {
 
 /** 套餐项目的可编辑字段，新增与编辑完全相同。 */
 export type PurchaseItemFields = {
+  /** 套餐项目当前的显示名称，可以单独修改，不是项目身份 */
   readonly name: string;
-  readonly category: PurchaseItemCategory;
+  /** 做了什么项目：分类、目录代码与自定义名称三列（BT-0021B） */
+  readonly service: PurchaseItemIdentity;
   /** 购买次数，正整数 */
   readonly quantity: number;
   /** 分配到这个项目的总金额，整数分，允许为 0（赠送项目，PRD 第 5B.6 节）；单次均价只是派生展示值 */
@@ -61,12 +64,32 @@ export function assertPurchaseBasicsAreValid(input: PurchaseBasicsInput): void {
   );
 }
 
+const IDENTITY_KEYS = ['categoryCode', 'customName', 'serviceCode'] as const;
+
+function isIdentityShape(value: unknown): value is PurchaseItemIdentity {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.length !== IDENTITY_KEYS.length || keys.some((key, index) => key !== IDENTITY_KEYS[index])) {
+    return false;
+  }
+  const candidate = value as Record<(typeof IDENTITY_KEYS)[number], unknown>;
+  return (
+    typeof candidate.categoryCode === 'string' &&
+    candidate.categoryCode !== '' &&
+    (candidate.serviceCode === null || typeof candidate.serviceCode === 'string') &&
+    (candidate.customName === null || typeof candidate.customName === 'string') &&
+    (candidate.serviceCode !== null || candidate.customName !== null)
+  );
+}
+
 /** 校验单个项目的字段（PRD 第 6.2、6.4 节）。 */
 export function assertPurchaseItemIsValid(item: PurchaseItemFields): void {
   assertValid(item.name.trim() !== '', '请填写项目名称');
-  // schema v4 的 category_code 只约束非空（DATA_MODEL_V4 第 4.4 节），
-  // 分类取值是否合法从数据库 CHECK 移到了这一层。
-  assertValid(PURCHASE_ITEM_CATEGORIES.includes(item.category), '请选择一个有效的项目分类');
+  // 这里只看结构：三列的类型对不对、字段多不多。是否属于当前目录要看库里原来存的是什么——
+  // 没改动的历史值原样保留，改动过的才严格校验——那一步在 `resolveItemIdentity`。
+  assertValid(isIdentityShape(item.service), '请选择项目');
   assertValid(Number.isInteger(item.quantity) && item.quantity > 0, '购买次数必须是大于 0 的整数');
   assertValid(
     Number.isSafeInteger(item.allocatedAmountMinor) &&

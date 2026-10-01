@@ -122,7 +122,7 @@ export type PurchaseFormController = {
 };
 
 const INFO_INCOMPLETE_MESSAGE = '套餐信息还没有填完整，请检查下方标红的内容。';
-const ITEMS_INCOMPLETE_MESSAGE = '有项目的名称、分类、次数或分配金额需要修改，请检查下方标红的内容。';
+const ITEMS_INCOMPLETE_MESSAGE = '有项目的选择、名称、次数或分配金额需要修改，请检查下方标红的内容。';
 
 export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormController {
   const router = useRouter();

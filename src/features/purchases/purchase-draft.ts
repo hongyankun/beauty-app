@@ -1,5 +1,4 @@
 import { otherRegionSelection, type ProvinceCitySelection } from '@/data/administrative-divisions';
-import type { PurchaseItemCategory } from '@/db';
 import {
   locationColumnsFromSelection,
   selectionMatchesStored,
@@ -19,6 +18,7 @@ import type {
   InstitutionSelection,
 } from './services/create-purchase';
 import type { PurchaseEditModel } from './services/get-purchase-for-edit';
+import { isSameIdentity, type PurchaseItemIdentity } from './services/purchase-item-columns';
 
 /**
  * 套餐表单的草稿模型与校验，新增与编辑共用同一份。
@@ -52,8 +52,13 @@ export type PurchaseItemDraft = {
   readonly key: string;
   /** 既有项目的 ID；null 表示这一行是本次新增的项目 */
   readonly purchaseItemId: string | null;
+  /** 套餐项目的显示名称；选定项目时自动填入默认名称，之后可以单独修改 */
   readonly name: string;
-  readonly category: PurchaseItemCategory | null;
+  /**
+   * 做了什么项目（BT-0021B）：分类、目录代码与自定义名称。null 表示还没选。
+   * 编辑时是库里的原值，当前目录不认识也原样保留；只有在选择器里确认了新的选择才会变。
+   */
+  readonly service: PurchaseItemIdentity | null;
   readonly quantity: string;
   /** 分配到这个项目的总金额，元，原样保存用户输入的文本 */
   readonly allocatedAmount: string;
@@ -81,7 +86,7 @@ export type PurchaseDraft = {
 
 export type PurchaseItemErrors = {
   readonly name?: string;
-  readonly category?: string;
+  readonly service?: string;
   readonly quantity?: string;
   readonly allocatedAmount?: string;
 };
@@ -154,7 +159,7 @@ export function createEmptyItemDraft(key: string): PurchaseItemDraft {
     key,
     purchaseItemId: null,
     name: '',
-    category: null,
+    service: null,
     quantity: '',
     allocatedAmount: '',
     notes: '',
@@ -220,7 +225,7 @@ export function createDraftFromEdit(model: PurchaseEditModel): PurchaseDraft {
       key: item.id,
       purchaseItemId: item.id,
       name: item.name,
-      category: item.category,
+      service: item.service,
       quantity: String(item.quantity),
       allocatedAmount: formatMinorForInput(item.allocatedAmountMinor),
       notes: item.notes ?? '',
@@ -383,7 +388,7 @@ export function validatePurchaseDraft(
   for (const item of draft.items) {
     const errors: {
       name?: string;
-      category?: string;
+      service?: string;
       quantity?: string;
       allocatedAmount?: string;
     } = {};
@@ -391,8 +396,16 @@ export function validatePurchaseDraft(
     if (item.name.trim() === '') {
       errors.name = '请填写项目名称';
     }
-    if (item.category === null) {
-      errors.category = '请选择项目分类';
+    if (item.service === null) {
+      errors.service = '请选择项目';
+    } else if (
+      item.purchaseItemId === null &&
+      item.service.serviceCode === null &&
+      item.name.trim() !== '' &&
+      item.name.trim() !== item.service.customName
+    ) {
+      // 新增的自定义项目名称必须等于自定义名称，与 service 的规则一致（DATA_MODEL_V4 第 4.4 节）。
+      errors.name = '新增的自定义项目，名称需要与「项目」中填写的名称一致';
     }
 
     const quantity = parseQuantity(item.quantity);
@@ -420,11 +433,12 @@ export function validatePurchaseDraft(
       itemErrors[item.key] = errors;
       continue;
     }
-    if (item.category !== null && quantity.ok && allocatedAmount.ok) {
+    if (item.service !== null && quantity.ok && allocatedAmount.ok) {
       items.push({
         purchaseItemId: item.purchaseItemId,
         name: item.name.trim(),
-        category: item.category,
+        // 原样交给 service：是否与库值相同、要不要严格校验，在事务内判断。
+        service: item.service,
         quantity: quantity.quantity,
         allocatedAmountMinor: allocatedAmount.minor,
         notes: optionalText(item.notes),
@@ -535,11 +549,18 @@ export function editModelAllocationFacts(model: PurchaseEditModel): AllocationFa
   };
 }
 
+function isSameServiceDraft(
+  left: PurchaseItemIdentity | null,
+  right: PurchaseItemIdentity | null,
+): boolean {
+  return left === null || right === null ? left === right : isSameIdentity(left, right);
+}
+
 function isSameItem(item: PurchaseItemDraft, initial: PurchaseItemDraft): boolean {
   return (
     item.purchaseItemId === initial.purchaseItemId &&
     item.name === initial.name &&
-    item.category === initial.category &&
+    isSameServiceDraft(item.service, initial.service) &&
     item.quantity === initial.quantity &&
     item.allocatedAmount === initial.allocatedAmount &&
     item.notes === initial.notes

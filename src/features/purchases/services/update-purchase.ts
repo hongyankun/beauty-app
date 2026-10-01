@@ -17,7 +17,7 @@ import {
   cityOf,
   type PurchaseItemFields,
 } from './purchase-input-rules';
-import { resolveItemIdentity } from './purchase-item-columns';
+import { assertNewItemNameMatchesIdentity, resolveItemIdentity } from './purchase-item-columns';
 import { normalizeInstitutionName } from '@/utils/institution-name';
 import {
   allocationSaveRejectedMessage,
@@ -40,6 +40,10 @@ import {
  * 历史核销的机构与城市快照记录的是「那一次核销发生时的事实」，不随之变动
  * （PRD 第 5A.2 节、PRD-INST-005）。改项目名称同样不改写使用记录上的名称快照
  * （PRD 第 5B.5 节）。
+ *
+ * 项目身份（BT-0021B）：每一行都带上分类、目录代码与自定义名称三列。与事务内读到的库值
+ * 逐字相同时原样写回，当前目录不认识的历史值也照常保留；不同则视为用户重新选择了项目，
+ * 写入前严格校验。改次数、金额、备注或项目名称都不会重算这三列。
  *
  * 金额分配同样在这里做最终裁决：原本平衡的套餐保存后必须仍然平衡；原本不平衡的套餐
  * 只有在总价、项目集合、各项目次数与分配金额都没变时才能保留原差额（PRD 第 5B.6 节）。
@@ -223,6 +227,24 @@ function assertAllocationIsSavable(
   }
 }
 
+/**
+ * 事务内的项目身份校验，在任何写入之前完成：身份没变的行原样通过，变了的行（以及新增的行）
+ * 必须是当前目录里的合法新选择；新增的自定义项目名称还必须等于自定义名称。
+ * `existing` 必须是事务内刚读到的那一份。
+ */
+function assertItemIdentitiesAreSavable(
+  input: UpdatePurchaseInput,
+  existing: ReadonlyMap<string, PurchaseItemEditRow>,
+): void {
+  for (const item of input.items) {
+    const stored = item.purchaseItemId === null ? null : (existing.get(item.purchaseItemId) ?? null);
+    resolveItemIdentity(stored, item.service, item.name);
+    if (item.purchaseItemId === null) {
+      assertNewItemNameMatchesIdentity(item.service, item.name);
+    }
+  }
+}
+
 type InstitutionSnapshots = {
   readonly institutionName: string | null;
   readonly city: string | null;
@@ -293,12 +315,12 @@ async function applyChanges(
     const stored = existing.get(item.purchaseItemId) ?? null;
     // 走 UPDATE 保留原 ID。全删再插会让这个项目的核销记录指向一个不存在的项目，
     // 等于把用户的核销历史一次性作废（任务书第三节）。
-    // 分类没改时库里的分类代码原样保留，规则见 purchase-item-columns。
+    // 项目身份没变时三列原样保留，规则见 purchase-item-columns。
     const changed = await repositories.purchases.updateItem({
       id: item.purchaseItemId,
       purchase_id: input.purchaseId,
       name: item.name.trim(),
-      ...resolveItemIdentity(stored, item),
+      ...resolveItemIdentity(stored, item.service, item.name),
       quantity: item.quantity,
       allocated_amount_minor: item.allocatedAmountMinor,
       notes: item.notes,
@@ -315,7 +337,7 @@ async function applyChanges(
       id: createUuid(),
       purchase_id: input.purchaseId,
       name: item.name.trim(),
-      ...resolveItemIdentity(null, item),
+      ...resolveItemIdentity(null, item.service, item.name),
       quantity: item.quantity,
       allocated_amount_minor: item.allocatedAmountMinor,
       notes: item.notes,
@@ -366,6 +388,7 @@ export async function updatePurchase(
 
     // 3. 判断。任何一条不成立都抛出，事务尚未写入任何内容。
     assertChangesAreSafe(input, existing);
+    assertItemIdentitiesAreSavable(input, existing);
     assertAllocationIsSavable(input, purchase.total_amount_minor, existing);
 
     // 4. 购买人：没改则原样保留 ID 与快照；改了则确认同一档案、存在且使用中。

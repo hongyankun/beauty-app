@@ -14,8 +14,9 @@
 > 现有页面通过兼容层继续工作：快速核销写入一条变美记录加一条使用记录，核销历史读取使用记录，
 > 删除套餐按第 5.2 节保留使用记录。两步式套餐表单与金额分配已由 BT-0019C 实现（未改表）。使用人管理与购买人、快速核销使用人的选择已由
 > BT-0020 实现（未改表，只读写 `people`、`purchases.purchaser_*` 与 `usage_records.person_*`）。机构结构化地点已由 BT-0019B2
-> 接线（未改表，只读写 `institutions` 的地点四列与 `purchases.city_snapshot`）。项目选择器、
-> 「记录一次变美」表单与记录 Tab 的新视图**均未实现**（第 12 节 BT-0021B、BT-0023、BT-0024）。
+> 接线（未改表，只读写 `institutions` 的地点四列与 `purchases.city_snapshot`）。项目选择器已由 BT-0021B
+> 接入新增与编辑套餐（未改表，只读写 `purchase_items` 的 `category_code`、`service_code`、`custom_name`；已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）。
+> 「记录一次变美」表单与记录 Tab 的新视图**均未实现**（第 12 节 BT-0023、BT-0024）。
 
 ---
 

@@ -1,10 +1,5 @@
-import {
-  DEFAULT_PROFILE_ID,
-  type BusinessDate,
-  type DataAccess,
-  type PurchaseItemCategory,
-} from '@/db';
-import { toFormCategory } from './purchase-item-columns';
+import { DEFAULT_PROFILE_ID, type BusinessDate, type DataAccess } from '@/db';
+import { identityFromColumns, type PurchaseItemIdentity } from './purchase-item-columns';
 
 /**
  * 编辑套餐的初值查询用例。
@@ -19,8 +14,13 @@ import { toFormCategory } from './purchase-item-columns';
 
 export type PurchaseEditItem = {
   readonly id: string;
+  /** 套餐项目当前的显示名称 */
   readonly name: string;
-  readonly category: PurchaseItemCategory;
+  /**
+   * 库里的分类、目录代码与自定义名称，原样照搬（BT-0021B）。当前目录不认识的值也不清洗、
+   * 不改写：表单原样带回，service 发现没变就原样写回。
+   */
+  readonly service: PurchaseItemIdentity;
   /** 购买次数 */
   readonly quantity: number;
   /** 分配到这个项目的总金额，整数分；单次均价只由它派生展示，不回写 */
@@ -92,7 +92,7 @@ export async function getPurchaseForEdit(
     items: itemRows.map((row) => ({
       id: row.id,
       name: row.name,
-      category: toFormCategory(row.category_code),
+      service: identityFromColumns(row),
       quantity: row.quantity,
       allocatedAmountMinor: row.allocated_amount_minor,
       notes: row.notes,

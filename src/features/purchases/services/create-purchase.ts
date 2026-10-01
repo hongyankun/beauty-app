@@ -14,7 +14,7 @@ import {
   cityOf,
   type PurchaseItemFields,
 } from './purchase-input-rules';
-import { resolveItemIdentity } from './purchase-item-columns';
+import { assertNewItemNameMatchesIdentity, resolveItemIdentity } from './purchase-item-columns';
 import { allocationSaveRejectedMessage, checkAllocationSave } from './purchase-allocation';
 import { PurchaseServiceError } from './errors';
 import { resolvePurchaser } from './purchaser-selection';
@@ -59,6 +59,9 @@ function assertInputIsValid(input: CreatePurchaseInput): void {
 
   for (const item of input.items) {
     assertPurchaseItemIsValid(item);
+    // 新建项目一律是「新选择」：分类、代码与自定义名称在写入前严格校验（BT-0021B）。
+    resolveItemIdentity(null, item.service, item.name);
+    assertNewItemNameMatchesIdentity(item.service, item.name);
   }
 
   // 新建套餐的分配合计必须恰好等于总价，差 1 分也不保存（PRD-ALLOC-002）。
@@ -118,12 +121,12 @@ export async function createPurchase(
       updated_at: now,
     });
 
-    // 分配金额原样写入；名称仍是自由文本，分类与项目标识的换算集中在 purchase-item-columns。
+    // 分配金额原样写入；名称是可单独修改的显示名称，项目身份三列的换算集中在 purchase-item-columns。
     const items: PurchaseItemRow[] = input.items.map((item) => ({
       id: createUuid(),
       purchase_id: purchaseId,
       name: item.name.trim(),
-      ...resolveItemIdentity(null, item),
+      ...resolveItemIdentity(null, item.service, item.name),
       quantity: item.quantity,
       allocated_amount_minor: item.allocatedAmountMinor,
       notes: item.notes,
