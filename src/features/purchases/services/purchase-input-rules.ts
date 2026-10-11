@@ -66,7 +66,11 @@ export function assertPurchaseBasicsAreValid(input: PurchaseBasicsInput): void {
 
 const IDENTITY_KEYS = ['categoryCode', 'customName', 'serviceCode'] as const;
 
-function isIdentityShape(value: unknown): value is PurchaseItemIdentity {
+/**
+ * 项目身份对象的结构：恰好三个字段、类型正确、代码与自定义名称至少一个。只看结构，不看是否属于当前目录。
+ * 套餐项目与「记录一次变美」的每一行共用这一条（BT-0023C）。
+ */
+export function isPurchaseItemIdentityShape(value: unknown): value is PurchaseItemIdentity {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
@@ -89,7 +93,7 @@ export function assertPurchaseItemIsValid(item: PurchaseItemFields): void {
   assertValid(item.name.trim() !== '', '请填写项目名称');
   // 这里只看结构：三列的类型对不对、字段多不多。是否属于当前目录要看库里原来存的是什么——
   // 没改动的历史值原样保留，改动过的才严格校验——那一步在 `resolveItemIdentity`。
-  assertValid(isIdentityShape(item.service), '请选择项目');
+  assertValid(isPurchaseItemIdentityShape(item.service), '请选择项目');
   assertValid(Number.isInteger(item.quantity) && item.quantity > 0, '购买次数必须是大于 0 的整数');
   assertValid(
     Number.isSafeInteger(item.allocatedAmountMinor) &&

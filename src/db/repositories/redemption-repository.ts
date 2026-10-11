@@ -31,6 +31,7 @@ import type {
  */
 const HISTORY_SELECT = `SELECT
     u.id,
+    u.event_id,
     u.source_kind,
     u.purchase_item_id,
     CASE WHEN u.source_kind IN ('package_item', 'single_purchase', 'deleted_package')

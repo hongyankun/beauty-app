@@ -198,7 +198,7 @@ repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 
 ### schema v4 与备份 v2（数据层已实现，BT-0022）
 
 > 本小节描述的数据层已由 BT-0022 落地：`MIGRATIONS` 含 migration 1 至 4（migration 4 在 `src/db/migration-004.ts`），导出只写备份 `formatVersion` 2。
-> 变美记录表单、省市与项目选择器接线等**界面仍未实现**（两步式套餐表单已由 BT-0019C 实现，使用人管理与购买人 / 快速核销使用人选择已由 BT-0020 实现），见 [ROADMAP](./ROADMAP.md)。
+> 两步式套餐表单（BT-0019C）、使用人管理与购买人 / 快速核销使用人选择（BT-0020）、省市与项目选择器接线（BT-0019B2、BT-0021B）以及「记录一次变美」（BT-0023，BT-0023 已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）已落地；记录 Tab 的新视图（BT-0024）仍未实现，见 [ROADMAP](./ROADMAP.md)。
 > 表结构、约束、迁移步骤与备份格式的**规范来源**是 [DATA_MODEL_V4.md](./DATA_MODEL_V4.md)，本节只概括架构层面的边界。
 > 决策依据见 [ADR-020](./DECISIONS.md#adr-020-真实变美记录与套餐资产分离beautyevent--usagerecord套餐只是可选来源) 至 [ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录)。
 
@@ -258,7 +258,8 @@ Profile ─┬─ Person（含唯一的「自己」）
 - v4 由**一条**新迁移（version 4）完成，沿用现有迁移框架：全部建表、搬运数据、自查在**同一个事务**内，最后才设置 `user_version = 4`，任一步失败整体回滚，库保持 v3。
 - 重建顺序兼顾原生（独占事务、外键不生效）与 Web（外键开启、`DROP TABLE` 会级联）：先建 `_v4` 新表并搬运、自查，再按子表在前删除旧表，最后重命名与建索引。
 - `redemption_records` 在迁移中删除，不做双写、不留兼容视图。每条旧核销成为一条变美记录加一条使用记录，二者复用原核销 ID。
-- **现有界面的兼容层**（BT-0022）：v4 表单与页面尚未实现，旧界面通过兼容查询继续工作，页面代码不变。快速核销写入一条变美记录 + 一条来源为套餐的使用记录（使用人自 BT-0020 起在快速核销中选择，默认「自己」）；核销历史与套餐详情读使用记录；撤销核销只改那一条使用记录；删除套餐把引用它的使用记录改为「原套餐已删除」并保留快照，不再级联删除。repository 层保留 `redemptions` 这个适配器名称，只是为了不改动旧界面的调用方。
+- **现有界面的兼容层**（BT-0022）：BT-0022 时 v4 表单与页面尚未实现，旧界面通过兼容查询继续工作，页面代码不变。快速核销写入一条变美记录 + 一条来源为套餐的使用记录（使用人自 BT-0020 起在快速核销中选择，默认「自己」）；核销历史与套餐详情读使用记录；撤销核销只改那一条使用记录；删除套餐把引用它的使用记录改为「原套餐已删除」并保留快照，不再级联删除。repository 层保留 `redemptions` 这个适配器名称，只是为了不改动旧界面的调用方。
+- **「记录一次变美」（BT-0023）**：业务在 `src/features/events/`。每条使用记录的输入都带着这一行的项目（BT-0023B，项目优先）；关联已有购买项目时，`create-beauty-event` 在事务内按 DATA_MODEL_V4 第 5.5 节的同一项目规则（`usage-snapshots.ts` 的 `identityMatchesItem`，界面筛选共用同一函数）校验项目与购买项目一致，项目必须是严格的新选择或与该购买项目库值逐字相同。`create-beauty-event` 在一个独占事务里完成全部写入（机构解析与自动恢复、「新建套餐并使用」的新套餐、「本次单独购买」的单次购买、变美记录与全部使用记录），并做写入后自查；新套餐与单次购买复用从 `create-purchase` 抽出的事务内写入函数 `insertNewPurchase`，不嵌套事务、不复制 SQL。事件与使用记录的编辑、删除、修正来源与幂等检查所需的读写在 `src/db/repositories/event-repository.ts`（`events`），新建时的两条 INSERT 沿用 `redemptions` 适配器，快速核销与完整流程写同一份 SQL。**服务层幂等**：表单打开时一次性生成事件、每条使用记录、新套餐与单次购买的全部 ID；事务内发现事件 ID 已存在且属于当前档案、内容逐项一致时直接返回，否则拒绝，不补写、不覆盖；独占事务让并发提交排队。单次购买的购买日期、机构与城市快照只在创建时从事件复制；后续编辑事件不回写 Purchase 或 PurchaseItem。`update-beauty-event` 只写 `beauty_events`。顶层输入中未知的键与项目其他 service 一样不参与处理；嵌套的项目身份对象按 `isPurchaseItemIdentityShape` 严格校验字段（BT-0023C）。「新建套餐并使用」的子步骤是独立路由 `/event/new-package`，通过内存中的交接模块 `new-package-handoff.ts` 把套餐草稿交回记录表单，不写库；记录表单离开时清掉自己发起的交接。
 - 套餐表单自 BT-0019C 起直接录入每个项目的分配总额并原样写入 `allocated_amount_minor`，单次均价只在界面上派生、不落库。能否保存由 `purchases/services/purchase-allocation.ts` 的纯函数判断：`update-purchase` 在事务内读取数据库现值作为「原状态」，不信任客户端传来的任何「未改动」标记，界面上的同一判断只用于提前提示。项目分类的合法取值由 service 层校验（v4 的 `category_code` 在数据库只约束非空）；数据库里的未知历史代码在未被修改时原样写回。
 
 **备份 1 / 2 边界**
@@ -309,7 +310,7 @@ Profile ─┬─ Person（含唯一的「自己」）
 ```
 src/
   app/         路由与布局，只放页面文件
-  features/    按业务领域组织的功能模块（当前：purchases、institutions、people、wishlist、catalog、home、backup）
+  features/    按业务领域组织的功能模块（当前：purchases、events、institutions、people、wishlist、catalog、home、backup）
   components/  跨 feature 复用的展示组件
   data/        随 App 打包、跨 feature 共用的版本化静态目录（当前：administrative-divisions 行政区目录、service-catalog 项目两级目录）；不进数据库与备份
   services/    网络请求与外部接口封装（尚未建立；feature 内的 service 用例放在各自的 features/*/services/）

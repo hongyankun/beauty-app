@@ -39,6 +39,10 @@ export function PurchaseListScreen() {
     router.push('/purchase/new');
   }, [router]);
 
+  const openNewEvent = useCallback(() => {
+    router.push('/event/new');
+  }, [router]);
+
   const clearFilter = useCallback(() => {
     setFilter('all');
   }, []);
@@ -141,6 +145,8 @@ export function PurchaseListScreen() {
       {/* Tab 栏本身已经包含底部安全区，这里不再叠加 inset，否则按钮会被顶高一截。 */}
       <View style={styles.footer}>
         <Button label="添加套餐" icon="plus" variant="primary" onPress={openNewPurchase} />
+        {/* 次要入口用描边按钮，一屏仍只有一个实心主按钮（BT-0023 裁决 1）。 */}
+        <Button label="记录一次变美" icon="treatment" onPress={openNewEvent} />
       </View>
     </Screen>
   );
@@ -160,6 +166,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.lg,
   },
   footer: {
+    gap: Layout.tightGap,
     paddingTop: Spacing.md,
     paddingBottom: Spacing.md,
   },

@@ -8,6 +8,8 @@ import type { PurchaseDetailItem } from '../services/get-purchase-detail';
 export type PurchaseItemCardProps = {
   item: PurchaseDetailItem;
   onRedeem: (purchaseItemId: string) => void;
+  /** 进入「记录一次变美」，并把这个项目预选为第一行的来源（BT-0023） */
+  onRecordEvent: (purchaseItemId: string) => void;
 };
 
 /**
@@ -20,7 +22,7 @@ export type PurchaseItemCardProps = {
  * 不只把按钮变灰（UI_REFERENCE 第 10 章、E-05、PRD-RED-004）。
  * 这只是提前告知，真正保证不会超额的是核销事务本身。
  */
-export function PurchaseItemCard({ item, onRedeem }: PurchaseItemCardProps) {
+export function PurchaseItemCard({ item, onRedeem, onRecordEvent }: PurchaseItemCardProps) {
   const usedUp = item.remaining === 0;
 
   return (
@@ -53,6 +55,19 @@ export function PurchaseItemCard({ item, onRedeem }: PurchaseItemCardProps) {
           usedUp
             ? `${item.name}，已无剩余次数，无法核销`
             : `核销一次 ${item.name}，剩余 ${item.remaining} 次`
+        }
+      />
+      {/* 完整记录入口：同一次到店还做了别的项目时用它。余次为 0 时同样不可用并说明原因。 */}
+      <Button
+        label="记录一次变美"
+        variant="text"
+        disabled={usedUp}
+        disabledReason={usedUp ? '已无剩余次数' : undefined}
+        onPress={() => onRecordEvent(item.id)}
+        accessibilityLabel={
+          usedUp
+            ? `${item.name}，已无剩余次数，无法从这个项目记录`
+            : `记录一次变美，并使用 ${item.name}，剩余 ${item.remaining} 次`
         }
       />
     </Card>

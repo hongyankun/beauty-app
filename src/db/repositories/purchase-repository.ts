@@ -86,7 +86,12 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
             p.name AS purchase_name,
             p.institution_name_snapshot,
             p.city_snapshot,
-            p.expires_on
+            p.expires_on,
+            p.purchase_kind,
+            p.purchase_date,
+            i.category_code,
+            i.service_code,
+            i.custom_name
            FROM purchase_items i
            JOIN purchases p ON p.id = i.purchase_id
            LEFT JOIN (

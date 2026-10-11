@@ -40,6 +40,10 @@ export function HomeScreen() {
     router.push('/redeem');
   }, [router]);
 
+  const openNewEvent = useCallback(() => {
+    router.push('/event/new');
+  }, [router]);
+
   const openExpiring = useCallback(() => {
     router.push('/(tabs)/home/expiring');
   }, [router]);
@@ -109,6 +113,9 @@ export function HomeScreen() {
 
       <View style={styles.actions}>
         <Button label="添加套餐" icon="plus" variant="primary" onPress={openNewPurchase} />
+        {/* 「记录一次」仍是快速核销的快捷入口；「记录一次变美」是完整流程（BT-0023 裁决 1）。
+            两者都是描边次按钮，不和「添加套餐」争主按钮。 */}
+        <Button label="记录一次变美" icon="treatment" onPress={openNewEvent} />
         <Button label="记录一次" icon="check" onPress={openRedeemPicker} />
       </View>
 

@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { Card } from "@/components/ui";
+import { Button, Card } from "@/components/ui";
 import {
   BorderWidth,
   Colors,
@@ -16,6 +16,8 @@ export type RedemptionHistoryRowProps = {
   entry: RedemptionHistoryEntry;
   /** 点击整条记录，进入它所属的套餐详情 */
   onPress: (purchaseId: string) => void;
+  /** 次要入口「查看这次变美」，进入这条记录所属的变美记录详情（BT-0023） */
+  onOpenEvent: (eventId: string) => void;
 };
 
 /**
@@ -32,12 +34,16 @@ export type RedemptionHistoryRowProps = {
  * 原套餐已删除的记录（ADR-021）没有可以进入的套餐详情：整条记录不是按钮，
  * 套餐那一行用文字注明「原套餐已删除」，不只靠不可点击来表达。
  *
+ * 「查看这次变美」是卡片下方独立的文字按钮，不在整条记录的点击区域里：整条记录点进去仍是套餐详情，
+ * 语义不变；原套餐已删除的记录没有套餐可去，但照样可以进入所属的变美记录（BT-0023 裁决 3）。
+ *
  * 项目名称独占一行、可自由换行，日期与状态分别在别的行上，
  * 因此系统字体放到最大档也不会互相挤压截断（PRD-NFR-006）。
  */
 export function RedemptionHistoryRow({
   entry,
   onPress,
+  onOpenEvent,
 }: RedemptionHistoryRowProps) {
   const voidedAt =
     entry.voidedAt === null
@@ -101,27 +107,45 @@ export function RedemptionHistoryRow({
     </Card>
   );
 
+  const eventLink = (
+    <Button
+      label="查看这次变美"
+      variant="text"
+      onPress={() => onOpenEvent(entry.eventId)}
+      accessibilityLabel={`查看这次变美，${entry.itemName}，${entry.redeemedOn}`}
+    />
+  );
+
   if (purchaseId === null) {
     return (
-      <View accessible accessibilityLabel={label}>
-        {card}
+      <View style={styles.row}>
+        <View accessible accessibilityLabel={label}>
+          {card}
+        </View>
+        {eventLink}
       </View>
     );
   }
 
   return (
-    <Pressable
-      onPress={() => onPress(purchaseId)}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => (pressed ? styles.pressed : null)}
-    >
-      {card}
-    </Pressable>
+    <View style={styles.row}>
+      <Pressable
+        onPress={() => onPress(purchaseId)}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={({ pressed }) => (pressed ? styles.pressed : null)}
+      >
+        {card}
+      </Pressable>
+      {eventLink}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  row: {
+    gap: Layout.tightGap,
+  },
   card: {
     gap: Layout.tightGap,
   },

@@ -20,6 +20,8 @@ export type InstitutionPickerProps = {
   onQueryChange: (query: string) => void;
   onSelectExisting: (option: InstitutionOption) => void;
   onClear: () => void;
+  /** 保存进行中等场景：输入框、建议项与「清除」都不可操作。不传时与原来一样可用 */
+  disabled?: boolean;
 };
 
 /**
@@ -40,6 +42,7 @@ export function InstitutionPicker({
   onQueryChange,
   onSelectExisting,
   onClear,
+  disabled = false,
 }: InstitutionPickerProps) {
   const keyword = normalizeInstitutionName(query);
 
@@ -69,6 +72,7 @@ export function InstitutionPicker({
         hint="留空表示暂不记录机构，之后可以补填"
         error={error}
         accessibilityLabel="机构，选填，可搜索已有机构或输入新名称"
+        editable={!disabled}
       />
 
       {selected ? (
@@ -79,6 +83,8 @@ export function InstitutionPicker({
           </Text>
           <Pressable
             onPress={onClear}
+            disabled={disabled}
+            accessibilityState={{ disabled }}
             accessibilityRole="button"
             accessibilityLabel="清除已选择的机构"
             hitSlop={Layout.labelGap}
@@ -98,6 +104,8 @@ export function InstitutionPicker({
             <Pressable
               key={option.id}
               onPress={() => onSelectExisting(option)}
+              disabled={disabled}
+              accessibilityState={{ disabled }}
               accessibilityRole="button"
               accessibilityLabel={`选择机构 ${option.name}${option.city ? `，${option.city}` : ''}`}
               style={({ pressed }) => [styles.row, pressed ? styles.pressed : null]}

@@ -218,6 +218,12 @@ export type RedeemableItemRow = {
   readonly institution_name_snapshot: string | null;
   readonly city_snapshot: string | null;
   readonly expires_on: BusinessDate | null;
+  /** 以下几列供「记录一次变美」选择来源：来源类型由购买类型决定，项目快照取自项目身份（BT-0023） */
+  readonly purchase_kind: PurchaseKind;
+  readonly purchase_date: BusinessDate;
+  readonly category_code: string;
+  readonly service_code: string | null;
+  readonly custom_name: string | null;
 };
 
 /**
@@ -482,6 +488,8 @@ export type RedemptionStatusFilter = 'all' | 'active' | 'void';
  */
 export type RedemptionHistoryEntryRow = {
   readonly id: string;
+  /** 所属变美记录；核销历史据此提供「查看这次变美」（BT-0023） */
+  readonly event_id: string;
   readonly source_kind: UsageSourceKind;
   readonly purchase_item_id: string | null;
   readonly item_name: string | null;
@@ -920,10 +928,97 @@ export type RestoreRepository = {
   countOrphans(profileId: string): Promise<RestoreOrphanCountsRow>;
 };
 
+/**
+ * 变美记录详情里的一条使用记录：整行使用记录，加上它**当前**关联的购买（若还关联）。
+ *
+ * `purchase_id`、`purchase_kind`、`purchase_date` 与 `expires_on` 只在来源仍指向一个
+ * 套餐项目时有值，用于跳转与日期提示；显示的套餐与项目名称一律取使用记录上的快照。
+ */
+export type EventUsageRow = UsageRecordRow & {
+  readonly purchase_id: string | null;
+  readonly purchase_kind: PurchaseKind | null;
+  readonly purchase_date: BusinessDate | null;
+  readonly expires_on: BusinessDate | null;
+};
+
+/** 修正来源与撤销前读到的一条使用记录，连同它所属事件的日期与档案。 */
+export type UsageWithEventRow = UsageRecordRow & {
+  readonly occurred_on: BusinessDate;
+  readonly profile_id: string;
+};
+
+/** 编辑变美记录时整体写回的列。ID、档案与创建时间不在其中，永远不变。 */
+export type BeautyEventUpdate = {
+  readonly id: string;
+  readonly profile_id: string;
+  readonly occurred_on: BusinessDate;
+  readonly institution_id: string | null;
+  readonly institution_name_snapshot: string | null;
+  readonly province_code_snapshot: string | null;
+  readonly province_name_snapshot: string | null;
+  readonly city_code_snapshot: string | null;
+  readonly city_name_snapshot: string | null;
+  readonly notes: string | null;
+  readonly updated_at: UtcTimestamp;
+};
+
+/**
+ * 修正来源只写这几列（DATA_MODEL_V4 第 5.5 节）：项目快照、使用人、事件、状态与备注都不在其中。
+ */
+export type UsageSourceUpdate = {
+  readonly id: string;
+  readonly source_kind: UsageSourceKind;
+  readonly purchase_item_id: string | null;
+  readonly purchase_name_snapshot: string | null;
+  readonly purchase_item_name_snapshot: string | null;
+  readonly updated_at: UtcTimestamp;
+};
+
+/** 客户端预先生成的 ID 在库里已被占用的条数，用于保存前的幂等检查。 */
+export type EventIdCollisionRow = {
+  readonly purchases: number;
+  readonly purchase_items: number;
+  readonly usage_records: number;
+};
+
+export type EventRepository = {
+  /**
+   * 按 ID 读取变美记录，**不**按档案过滤。
+   *
+   * 只给幂等检查用：同一个 ID 已经属于其他档案时，要能明确拒绝，而不是当作不存在再插一条。
+   * 其余读取一律用 `findEvent`。
+   */
+  findEventById(eventId: string): Promise<BeautyEventRow | null>;
+  /** 按 (profile_id, id) 读取；其他档案的记录读不到。 */
+  findEvent(profileId: string, eventId: string): Promise<BeautyEventRow | null>;
+  /** 事件下的全部使用记录（含已撤销），按录入顺序。 */
+  listEventUsages(eventId: string): Promise<EventUsageRow[]>;
+  /** 写回事件的日期、机构、地点快照与备注；返回实际更新的行数。 */
+  updateEvent(row: BeautyEventUpdate): Promise<number>;
+  /**
+   * 删除事件下的全部使用记录，返回删除的行数。
+   *
+   * 独占事务的连接没有开启外键，`ON DELETE CASCADE` 不一定生效，所以删除事件前由 service 显式调用。
+   */
+  deleteEventUsages(eventId: string): Promise<number>;
+  deleteEvent(profileId: string, eventId: string): Promise<number>;
+  /** 读一条使用记录，同时校验它所属事件的档案。 */
+  findUsage(profileId: string, usageId: string): Promise<UsageWithEventRow | null>;
+  /** 修正来源。条件里带 `status = 'active'`，已撤销的记录以 0 行结果自证。 */
+  updateUsageSource(row: UsageSourceUpdate): Promise<number>;
+  /** 这些 ID 在购买、项目与使用记录表里已经存在多少条。 */
+  countIdCollisions(ids: {
+    readonly purchaseIds: readonly string[];
+    readonly purchaseItemIds: readonly string[];
+    readonly usageIds: readonly string[];
+  }): Promise<EventIdCollisionRow>;
+};
+
 export type RepositoryBundle = {
   readonly institutions: InstitutionRepository;
   readonly purchases: PurchaseRepository;
   readonly redemptions: RedemptionRepository;
+  readonly events: EventRepository;
   readonly people: PeopleRepository;
   readonly dashboard: DashboardRepository;
   readonly wishlist: WishlistRepository;

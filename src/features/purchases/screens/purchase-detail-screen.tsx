@@ -88,6 +88,13 @@ export function PurchaseDetailScreen() {
     [router, purchaseId],
   );
 
+  const openRecordEvent = useCallback(
+    (purchaseItemId: string) => {
+      router.push({ pathname: '/event/new', params: { purchaseItemId } });
+    },
+    [router],
+  );
+
   const openEdit = useCallback(() => {
     // 编辑页挂在根 Stack 上，覆盖 Tab 栏（IA 第 4.3 节第 1 条）。
     // 用 push 而不是 replace：保存或取消后 back 回来的就是这个详情页，
@@ -278,7 +285,12 @@ export function PurchaseDetailScreen() {
             <SectionHeader title={`项目（${detail.itemCount}）`} />
             <View style={styles.items}>
               {detail.items.map((item) => (
-                <PurchaseItemCard key={item.id} item={item} onRedeem={openRedemption} />
+                <PurchaseItemCard
+                  key={item.id}
+                  item={item}
+                  onRedeem={openRedemption}
+                  onRecordEvent={openRecordEvent}
+                />
               ))}
             </View>
 

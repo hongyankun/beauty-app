@@ -16,7 +16,8 @@
 > BT-0020 实现（未改表，只读写 `people`、`purchases.purchaser_*` 与 `usage_records.person_*`）。机构结构化地点已由 BT-0019B2
 > 接线（未改表，只读写 `institutions` 的地点四列与 `purchases.city_snapshot`）。项目选择器已由 BT-0021B
 > 接入新增与编辑套餐（未改表，只读写 `purchase_items` 的 `category_code`、`service_code`、`custom_name`；已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）。
-> 「记录一次变美」表单与记录 Tab 的新视图**均未实现**（第 12 节 BT-0023、BT-0024）。
+> 「记录一次变美」、编辑与删除变美记录、单条撤销与第 5.5 节的来源修正已由 BT-0023 实现（未改表，只读写 `beauty_events`、`usage_records`，以及「新建套餐并使用」与「本次单独购买」所需的 `purchases`、`purchase_items`；BT-0023 已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）。
+> 记录 Tab 的新视图**仍未实现**（第 12 节 BT-0024）。
 
 ---
 
@@ -467,6 +468,7 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 - 用完后（`remaining = 0`）自然退出待使用次数与临期提醒；它没有有效期，本来也不进临期提醒。
 - 界面上带「单次」标签。默认不出现在「可用套餐」来源列表中，但在「全部购买」与相关变美记录中始终可见。
 - 若其唯一的使用记录被作废，`remaining` 按派生规则回到 1，重新计入待使用次数；用户可以在「全部购买」中找到它并再次使用，新的使用记录来源为 `single_purchase`（第 5.1 节）。
+- 单次购买的购买日期、机构与城市快照只在创建时从事件复制；后续编辑事件不回写 Purchase 或 PurchaseItem。编辑事件只改 `beauty_events`，不改任何 `purchases` 与 `purchase_items`；撤销、删除事件或修正来源离开单次购买时，它与它的项目都保留，余次按有效使用记录自然回到 1（BT-0023C 产品裁决 A）。
 - 「单次购买恰好一个项目且次数为 1」无法用 CHECK 表达，由 service、备份 validator 与迁移自查共同保证。
 - 「新建套餐并使用」同样是一个事务：新建 `package` 购买及其项目，并在同一事务内写入事件与 `package_item` 使用记录；任一步失败整体回滚，不留下没有使用记录的新套餐或没有来源的事件。
 
@@ -644,7 +646,7 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 - **只有 BT-0022** 创建 schema v4 与备份 v2。它之前的任务不得新增迁移；它之后的功能任务（BT-0019C、BT-0020、BT-0019B2、BT-0021B、BT-0023、BT-0024）**只接线、不改表**，不得追加列或新迁移。
 - 若后续任务发现本文件遗漏了必需的列，必须停止并先修订本文件与相关 ADR，再由新的 schema 任务处理，不得在功能任务里顺手加列。
 - BT-0019B2 的职责不只是放一个选择器：它负责在新增与编辑机构时把标准地点写入 `institutions` 的三个代码列与 `city`，并让新建与编辑套餐复用所选机构的地点（`city_snapshot` 取自机构，表单不再单独输入城市）。「选了省市却不落代码」不算完成。
-- BT-0023 负责实现第 5.5 节的来源修正规则，不再重新决定规则。
+- BT-0023 负责实现第 5.5 节的来源修正规则，不再重新决定规则。已实现：`src/features/events/services/correct-usage-source.ts` 按本节在独占事务内重读记录、校验目标的档案归属、项目兼容（目录项目同代码；自定义项目同分类且 `normalizeServiceName` 后相同）、余次与过期确认，只写 `source_kind`、`purchase_item_id`、两列来源快照与 `updated_at`。BT-0023 另按产品裁决：使用明细的使用人、项目快照与备注保存后不提供直接编辑，不提供「修改实际项目」（PRD 第 5B.2 节）。
 - BT-0022 之前，PRD 中描述 v3 行为的条款继续有效；v4 上线后，对应条款按 PRD 第 5B 章的目标行为生效。
 
 ## 13 不在 v4 范围内

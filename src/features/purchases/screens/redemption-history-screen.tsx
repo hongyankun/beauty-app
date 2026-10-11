@@ -74,6 +74,14 @@ export function RedemptionHistoryScreen() {
     [router],
   );
 
+  const openEvent = useCallback(
+    (eventId: string) => {
+      // 变美记录详情同样压在记录 Tab 的栈里，保留 Tab 栏（BT-0023 裁决 1）。
+      router.push({ pathname: '/(tabs)/records/event/[eventId]', params: { eventId } });
+    },
+    [router],
+  );
+
   const openRedeemPicker = useCallback(() => {
     // 复用既有的快捷核销选择页，不在本页另起一套核销表单（任务书第十二节）。
     router.push('/redeem');
@@ -81,9 +89,9 @@ export function RedemptionHistoryScreen() {
 
   const renderItem = useCallback(
     ({ item }: { item: RedemptionHistoryEntry }) => (
-      <RedemptionHistoryRow entry={item} onPress={openPurchase} />
+      <RedemptionHistoryRow entry={item} onPress={openPurchase} onOpenEvent={openEvent} />
     ),
-    [openPurchase],
+    [openPurchase, openEvent],
   );
 
   const renderSectionHeader = useCallback(

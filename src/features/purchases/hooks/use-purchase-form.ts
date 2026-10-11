@@ -47,8 +47,11 @@ import { useInstitutionOptions } from './use-institution-options';
 export type UsePurchaseFormOptions = {
   /** 表单初值。必须是稳定引用，它同时是「有没有改动」的比较基准 */
   readonly initialDraft: PurchaseDraft;
-  /** 校验通过后的保存动作；抛出异常即视为失败，草稿原样保留 */
-  readonly onSave: (input: PurchaseDraftInput) => Promise<void>;
+  /**
+   * 校验通过后的保存动作；抛出异常即视为失败，草稿原样保留。
+   * 第二个参数是此刻的草稿：「新建套餐并使用」要把草稿原样交回记录表单，以便再次修改（BT-0023）。
+   */
+  readonly onSave: (input: PurchaseDraftInput, draft: PurchaseDraft) => Promise<void>;
   /**
    * 保存成功后的导航。
    *
@@ -271,7 +274,7 @@ export function usePurchaseForm(options: UsePurchaseFormOptions): PurchaseFormCo
     setSaveError(null);
 
     try {
-      await optionsRef.current.onSave(input);
+      await optionsRef.current.onSave(input, draftRef.current);
       if (!mounted.current) {
         return;
       }

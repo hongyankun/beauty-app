@@ -51,6 +51,8 @@ function describePurchase(sourceKind: string, purchaseName: string | null): stri
 
 export type RedemptionHistoryEntry = {
   readonly id: string;
+  /** 所属变美记录，「查看这次变美」用；原套餐已删除的记录同样有（BT-0023） */
+  readonly eventId: string;
   /** 所属套餐，点击整条记录时跳到它的详情页；原套餐已删除或未关联套餐时为 null，不可点击 */
   readonly purchaseId: string | null;
   readonly purchaseItemId: string | null;
@@ -120,6 +122,7 @@ export async function listRedemptionHistory(
     const isVoided = row.status === 'void';
     const entry: RedemptionHistoryEntry = {
       id: row.id,
+      eventId: row.event_id,
       purchaseId: row.purchase_id,
       purchaseItemId: row.purchase_item_id,
       // 项目名称取使用记录上的快照：套餐类来源取套餐项目名称快照，外部来源与暂不关联
