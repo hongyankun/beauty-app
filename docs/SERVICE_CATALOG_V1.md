@@ -2,7 +2,7 @@
 
 相关文档：[DATA_MODEL_V4](./DATA_MODEL_V4.md) · [产品需求 第 5B.10 节](./PRODUCT_REQUIREMENTS.md) · [架构](./ARCHITECTURE.md) · [决策记录 ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录) · [路线图](./ROADMAP.md)
 
-> **状态**：数据与纯函数已由 BT-0021A 实现（`src/data/service-catalog/`），**待产品内容审核**。迁移映射已由 BT-0022 使用（schema v4、备份 `formatVersion` 2）；项目选择器已由 BT-0021B 接入新增与编辑套餐（已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收），目录数据未因接线改变。
+> **状态**：数据与纯函数已由 BT-0021A 实现（`src/data/service-catalog/`），**待产品内容审核**。迁移映射已由 BT-0022 使用（schema v4、备份 `formatVersion` 2）；项目选择器已由 BT-0021B 接入新增与编辑套餐（已实现，自动化测试与独立代码审计通过；v4 集中人工验收核心业务链路通过），目录数据未因接线改变。
 >
 > 本文供人工审核条目内容。代码中的数据是唯一事实来源；本文与代码不一致时以代码为准，并应修正本文。
 

@@ -198,7 +198,7 @@ repository 实现落在 `src/db/repositories/` 之下，service 用例落在各 
 ### schema v4 与备份 v2（数据层已实现，BT-0022）
 
 > 本小节描述的数据层已由 BT-0022 落地：`MIGRATIONS` 含 migration 1 至 4（migration 4 在 `src/db/migration-004.ts`），导出只写备份 `formatVersion` 2。
-> 两步式套餐表单（BT-0019C）、使用人管理与购买人 / 快速核销使用人选择（BT-0020）、省市与项目选择器接线（BT-0019B2、BT-0021B）以及「记录一次变美」（BT-0023，BT-0023 已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）已落地；记录 Tab 的三个视图、变美历史、套餐使用历史与首页最近变美已由 BT-0024 落地（BT-0024 已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收），见 [ROADMAP](./ROADMAP.md)。
+> 两步式套餐表单（BT-0019C）、使用人管理与购买人 / 快速核销使用人选择（BT-0020）、省市与项目选择器接线（BT-0019B2、BT-0021B）以及「记录一次变美」（BT-0023，BT-0023 已实现，自动化测试与独立代码审计通过；v4 集中人工验收核心业务链路通过）已落地；记录 Tab 的三个视图、变美历史、套餐使用历史与首页最近变美已由 BT-0024 落地（BT-0024 已实现，自动化测试与独立代码审计通过；v4 集中人工验收核心业务链路通过），见 [ROADMAP](./ROADMAP.md)。
 > 表结构、约束、迁移步骤与备份格式的**规范来源**是 [DATA_MODEL_V4.md](./DATA_MODEL_V4.md)，本节只概括架构层面的边界。
 > 决策依据见 [ADR-020](./DECISIONS.md#adr-020-真实变美记录与套餐资产分离beautyevent--usagerecord套餐只是可选来源) 至 [ADR-024](./DECISIONS.md#adr-024-行政区与项目分类使用随-app-打包的版本化静态目录)。
 
@@ -251,7 +251,7 @@ Profile ─┬─ Person（含唯一的「自己」）
 - **跨分类白名单**：旧项目默认只能在相同一级分类内，通过标准显示名称或经审核的 legacyExactNames 精确且唯一映射。只有冻结在 legacyCrossCategoryMappings 中的明确历史例外，才允许跨一级分类迁移。首版唯一例外是旧中胚层微针分类下的'射频微针'和'黄金微针'，迁移到光电类射频微针。白名单在 `legacy-cross-category.ts`（常量 `LEGACY_CROSS_CATEGORY_MAPPINGS`），匹配顺序为同分类精确匹配 → 白名单 → 自定义名称；完整性检查要求键唯一、目标在用且与旧分类不同、旧分类不是「其他」、旧名称已是目标条目的名称或旧名称。白名单用于旧数据库 migration 和 v1 备份升级转换，但不用于 v2 备份的常规恢复或历史快照重校验。迁移与 v1 → v2 转换调用同一个纯函数；白名单另有独立摘要（`legacyCrossCategoryDigest`）。
 - **严格校验的边界**：`isValidNewServiceSelection` 只用于从当前选择器新选出的项目、用户主动修改项目后的写入前校验（代码必须存在、在用、属于所选分类；自定义名称非空且已清洗；两者不能同时有值）。它**不用于**加载与显示已有记录、备份的通用结构校验、从备份恢复，也不用于因目录更新批量改写快照；已有数据里的停用或未知代码照常按快照显示，不拒绝、不清空、不自动改写。
 - 迁移映射已由 BT-0022 落地：migration 4 与 v1 → v2 备份转换共用 `src/db/legacy-mapping/` 中的同一个纯函数（内部调用本目录的旧名称映射）。
-- BT-0021B 已把选择器接入新增与编辑套餐（已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）：库里三列（`category_code`、`service_code`、`custom_name`）与选择结果之间的适配集中在 `src/features/purchases/services/purchase-item-columns.ts`。读永远宽松（`identityFromColumns` 原样照搬，未知分类按「其他」显示、停用或未知代码标注，不抛错）；写永远严格（`resolveItemIdentity` 对新选择调用 `isValidNewServiceSelection`）；编辑时是否修改由 service 在事务内对照库里现值判断，三列完全相同则原样写回，包括停用、未知与旧数据中两者都有值的组合。新增的自定义项目，显示名称必须等于 `custom_name`（`assertNewItemNameMatchesIdentity`，只用于新增的行；BT-0021BA 审计补上）。选择器组件不含 SQL 与路由。心愿单不接入。
+- BT-0021B 已把选择器接入新增与编辑套餐（已实现，自动化测试与独立代码审计通过；v4 集中人工验收核心业务链路通过）：库里三列（`category_code`、`service_code`、`custom_name`）与选择结果之间的适配集中在 `src/features/purchases/services/purchase-item-columns.ts`。读永远宽松（`identityFromColumns` 原样照搬，未知分类按「其他」显示、停用或未知代码标注，不抛错）；写永远严格（`resolveItemIdentity` 对新选择调用 `isValidNewServiceSelection`）；编辑时是否修改由 service 在事务内对照库里现值判断，三列完全相同则原样写回，包括停用、未知与旧数据中两者都有值的组合。新增的自定义项目，显示名称必须等于 `custom_name`（`assertNewItemNameMatchesIdentity`，只用于新增的行；BT-0021BA 审计补上）。选择器组件不含 SQL 与路由。心愿单不接入。
 
 **schema 3 / 4 边界**
 
