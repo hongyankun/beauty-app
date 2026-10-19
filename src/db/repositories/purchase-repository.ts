@@ -2,6 +2,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import type { PurchaseRow } from '../types';
 import type {
+  PurchaseItemFactRow,
   DatedPurchaseItemFactRow,
   PurchaseDeletionImpactRow,
   PurchaseItemContextRow,
@@ -38,6 +39,7 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
             p.currency,
             p.expires_on,
             p.created_at,
+            p.purchase_kind,
             (SELECT COUNT(*)
                FROM purchase_items i
               WHERE i.purchase_id = p.id) AS item_count,
@@ -56,7 +58,39 @@ export function createPurchaseRepository(db: SQLiteDatabase): PurchaseRepository
               WHERE i.purchase_id = p.id) AS remaining_count
            FROM purchases p
           WHERE p.profile_id = ?
-          ORDER BY p.purchase_date DESC, p.created_at DESC`,
+          ORDER BY p.purchase_date DESC, p.created_at DESC, p.id DESC`,
+        [profileId],
+      );
+    },
+
+    async listItemFacts(profileId) {
+      // 项目视图（BT-0024）：全部套餐项目，含单次购买与已用完的项目；是否显示由 service 按范围筛选。
+      // 有效使用数用预聚合子查询 LEFT JOIN，只扫一遍 usage_records，不为每个项目单独查。
+      // 排序显式到项目 rowid，展开后的具体项目顺序稳定：购买日期倒序、创建时间倒序、购买 ID、项目录入顺序。
+      return db.getAllAsync<PurchaseItemFactRow>(
+        `SELECT
+            i.id,
+            i.name,
+            i.category_code,
+            i.service_code,
+            i.custom_name,
+            i.quantity,
+            COALESCE(rc.active_count, 0) AS active_count,
+            p.id            AS purchase_id,
+            p.name          AS purchase_name,
+            p.purchase_kind AS purchase_kind,
+            p.purchase_date AS purchase_date,
+            p.expires_on    AS expires_on
+           FROM purchase_items i
+           JOIN purchases p ON p.id = i.purchase_id
+           LEFT JOIN (
+             SELECT purchase_item_id, COUNT(*) AS active_count
+               FROM usage_records
+              WHERE status = 'active' AND purchase_item_id IS NOT NULL
+              GROUP BY purchase_item_id
+           ) rc ON rc.purchase_item_id = i.id
+          WHERE p.profile_id = ?
+          ORDER BY p.purchase_date DESC, p.created_at DESC, p.id DESC, i.created_at ASC, i.rowid ASC`,
         [profileId],
       );
     },

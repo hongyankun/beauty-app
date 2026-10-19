@@ -3,10 +3,10 @@ import { useCallback } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { Button, EmptyState, InlineNotice, Screen, SectionHeader, StatCard } from '@/components/ui';
+import { BeautyEventCard } from '@/features/events/components/beauty-event-card';
 import { Colors, Layout, TextStyles } from '@/theme';
 import { formatMinorAsYuan } from '@/utils/money';
 import { ExpiringPurchaseCard } from '../components/expiring-purchase-card';
-import { RecentRedemptionCard } from '../components/recent-redemption-card';
 import { useExpiringPurchases } from '../hooks/use-expiring-purchases';
 import { useHomeDashboard } from '../hooks/use-home-dashboard';
 import { EXPIRING_WINDOW_DAYS, HOME_REMINDER_LIMIT } from '../services/list-expiring-purchases';
@@ -48,6 +48,19 @@ export function HomeScreen() {
     router.push('/(tabs)/home/expiring');
   }, [router]);
 
+  const openEvent = useCallback(
+    (eventId: string) => {
+      // 变美记录详情压在记录 Tab 的栈里（BT-0024）；首页最近变美以事件为单位，进入的是事件详情。
+      router.push({ pathname: '/(tabs)/records/event/[eventId]', params: { eventId } });
+    },
+    [router],
+  );
+
+  const openEventHistory = useCallback(() => {
+    // 带着 view 参数直接进入记录 Tab 的变美历史视图（BT-0024 裁决 2）。
+    router.push({ pathname: '/(tabs)/records', params: { view: 'event' } });
+  }, [router]);
+
   const openPurchase = useCallback(
     (purchaseId: string) => {
       router.push(`/(tabs)/records/${purchaseId}`);
@@ -65,7 +78,7 @@ export function HomeScreen() {
 
   const pendingText = dashboard === null ? NO_VALUE : String(dashboard.pendingCount);
   const spendText = dashboard === null ? NO_VALUE : formatMinorAsYuan(dashboard.totalSpendMinor);
-  const recent = dashboard?.recentRedemptions ?? [];
+  const recent = dashboard?.recentEvents ?? [];
 
   // 首页只放最紧急的几个：已过期在前，其后是最早到期的（任务书第七节）。
   const reminders = expiring.result?.all.slice(0, HOME_REMINDER_LIMIT) ?? [];
@@ -157,27 +170,24 @@ export function HomeScreen() {
       </View>
 
       <View style={styles.section}>
-        <SectionHeader title="最近记录" />
+        {/* 以变美记录为单位，最多 3 条（PRD 第 8.2 节、BT-0024 裁决 7）；「查看全部」进入变美历史。 */}
+        <SectionHeader title="最近变美" actionLabel="查看全部" onActionPress={openEventHistory} />
 
         {firstLoad ? (
           <Text accessible style={styles.placeholder}>
-            正在载入最近记录…
+            正在载入最近变美…
           </Text>
         ) : null}
 
-        {recent.map((redemption) => (
-          <RecentRedemptionCard
-            key={redemption.id}
-            redemption={redemption}
-            onPress={openPurchase}
-          />
+        {recent.map((card) => (
+          <BeautyEventCard key={card.id} card={card} onPress={openEvent} />
         ))}
 
         {!firstLoad && !failedWithoutData && recent.length === 0 ? (
           <EmptyState
             icon="inbox"
-            title="还没有记录"
-            description="完成第一次记录后，这里会显示最近做过的项目。"
+            title="还没有变美记录"
+            description="记录一次变美后，这里会显示最近几次的项目。"
           />
         ) : null}
       </View>

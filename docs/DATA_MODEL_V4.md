@@ -17,7 +17,7 @@
 > 接线（未改表，只读写 `institutions` 的地点四列与 `purchases.city_snapshot`）。项目选择器已由 BT-0021B
 > 接入新增与编辑套餐（未改表，只读写 `purchase_items` 的 `category_code`、`service_code`、`custom_name`；已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）。
 > 「记录一次变美」、编辑与删除变美记录、单条撤销与第 5.5 节的来源修正已由 BT-0023 实现（未改表，只读写 `beauty_events`、`usage_records`，以及「新建套餐并使用」与「本次单独购买」所需的 `purchases`、`purchase_items`；BT-0023 已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）。
-> 记录 Tab 的新视图**仍未实现**（第 12 节 BT-0024）。
+> 记录 Tab 的三个视图、变美历史、套餐使用历史与首页最近变美已由 BT-0024 实现（未改表，只读；BT-0024 已实现，自动化测试与独立代码审计通过；待 v4 集中人工验收）。
 
 ---
 
@@ -512,7 +512,7 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 
 ### 9.2 历史
 
-- 变美历史以 BeautyEvent 为单位，按 `occurred_on` 倒序、其次 `created_at` 倒序。
+- 变美历史以 BeautyEvent 为单位，按 `occurred_on` 倒序、其次 `created_at` 倒序，最后以 `id` 倒序兜底（BT-0024 实现时补上，保证顺序稳定）。首页「最近变美」取同一排序的前 3 条。列表摘要只读使用记录上的名称快照与状态，一次查询取事件、一次查询取这些事件下的使用记录，在内存中按 `event_id` 组装。
 - 事件详情展示其下全部 UsageRecord（含已作废，明确标注）。
 - 套餐详情展示当前资产，以及引用它各项目的使用记录（按事件日期倒序）。
 
@@ -520,6 +520,7 @@ ALTER TABLE institutions ADD COLUMN city_code TEXT
 
 - 按 `(category_code, service_code)` 在**展示层**聚合；`service_code` 为空的自定义项目逐条单独显示。
 - 聚合只是展示方式：底层每个 PurchaseItem 仍是独立资产，核销时必须落到具体的某一个项目。
+- BT-0024 实现：分组键为 `(category_code, service_code)`，分类不同不合并；剩余次数逐个项目夹到 0 后相加，已使用只数有效使用记录；一次查询取全部项目事实（有效使用数用预聚合子查询），不写回数据库。
 
 ---
 

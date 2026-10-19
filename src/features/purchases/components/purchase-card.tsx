@@ -27,6 +27,8 @@ export function PurchaseCard({ summary, onPress }: PurchaseCardProps) {
   const usedUp = summary.remaining === 0;
 
   const meta = [
+    // 单次购买带「单次」文字标签（DATA_MODEL_V4 第 7 节，BT-0024 裁决 3）。
+    summary.purchaseKind === 'single' ? '单次' : null,
     summary.institutionName,
     summary.city,
     `${summary.itemCount} 个项目`,
@@ -68,7 +70,7 @@ export function PurchaseCard({ summary, onPress }: PurchaseCardProps) {
     <Pressable
       onPress={() => onPress(summary.id)}
       accessibilityRole="button"
-      accessibilityLabel={`${summary.name}，${
+      accessibilityLabel={`${summary.name}，${summary.purchaseKind === 'single' ? '单次购买，' : ''}${
         usedUp ? '已用完' : `剩余 ${summary.remaining} 次`
       }，${summary.purchaseDate} 购买，查看详情`}
       style={({ pressed }) => (pressed ? styles.pressed : null)}

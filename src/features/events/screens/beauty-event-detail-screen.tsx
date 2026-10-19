@@ -83,7 +83,8 @@ export function BeautyEventDetailScreen() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace('/(tabs)/records');
+      // 没有可返回的页面（例如从外部直接打开）时回到记录 Tab 的变美历史视图（BT-0024）。
+      router.replace({ pathname: '/(tabs)/records', params: { view: 'event' } });
     }
   }, [router]);
 

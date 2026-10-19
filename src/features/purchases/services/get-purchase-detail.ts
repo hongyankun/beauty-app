@@ -38,6 +38,8 @@ export type PurchaseDetailItem = {
 
 export type PurchaseDetailRedemption = {
   readonly id: string;
+  /** 所属变美记录；「查看这次变美」用（BT-0024） */
+  readonly eventId: string;
   readonly purchaseItemId: string;
   readonly itemName: string;
   readonly redeemedOn: BusinessDate;
@@ -136,6 +138,7 @@ export async function getPurchaseDetail(
     items,
     redemptions: redemptionRows.map((row) => ({
       id: row.id,
+      eventId: row.event_id,
       purchaseItemId: row.purchase_item_id,
       itemName: row.item_name,
       redeemedOn: row.redeemed_on,

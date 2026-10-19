@@ -1,4 +1,6 @@
-import { DEFAULT_PROFILE_ID, type BusinessDate, type DataAccess } from '@/db';
+import { DEFAULT_PROFILE_ID, type DataAccess } from '@/db';
+import type { BeautyEventCard } from '@/features/events/event-summary';
+import { listBeautyEventCards } from '@/features/events/services/list-beauty-events';
 
 /**
  * 首页概览查询用例。
@@ -7,21 +9,11 @@ import { DEFAULT_PROFILE_ID, type BusinessDate, type DataAccess } from '@/db';
  * 不把记录列表读进内存循环累加（任务书第六节）。
  */
 
-/** 首页「最近记录」最多展示的条数（任务书第三节）。 */
-export const RECENT_REDEMPTION_LIMIT = 5;
-
-export type HomeRecentRedemption = {
-  readonly id: string;
-  readonly purchaseItemId: string;
-  readonly itemName: string;
-  /** 所属套餐，用于展示与跳转 */
-  readonly purchaseId: string;
-  readonly purchaseName: string;
-  readonly redeemedOn: BusinessDate;
-  /** 本次核销当时的机构名称快照；未填写机构时为 null */
-  readonly institutionName: string | null;
-  readonly city: string | null;
-};
+/**
+ * 首页「最近变美」最多展示的变美记录条数（PRD 第 8.2 节，BT-0024 裁决 7）。
+ * 以变美记录为单位：同一次到店无论有几条使用记录，只显示一次。
+ */
+export const RECENT_EVENT_LIMIT = 3;
 
 export type HomeDashboard = {
   /**
@@ -33,8 +25,8 @@ export type HomeDashboard = {
   readonly pendingCount: number;
   /** 累计投入 = 全部套餐总价之和，整数分（ADR-006） */
   readonly totalSpendMinor: number;
-  /** 最近的有效核销，最多 `RECENT_REDEMPTION_LIMIT` 条 */
-  readonly recentRedemptions: readonly HomeRecentRedemption[];
+  /** 最近的变美记录，最多 `RECENT_EVENT_LIMIT` 条，与变美历史共用同一套摘要 */
+  readonly recentEvents: readonly BeautyEventCard[];
 };
 
 /**
@@ -45,24 +37,15 @@ export type HomeDashboard = {
  * 首页会重新获得焦点并整体重读，不会停在拼接出来的中间状态。
  */
 export async function getHomeDashboard(dataAccess: DataAccess): Promise<HomeDashboard> {
-  const [totals, recentRows] = await Promise.all([
+  const [totals, recentEvents] = await Promise.all([
     dataAccess.dashboard.getTotals(DEFAULT_PROFILE_ID),
-    dataAccess.dashboard.listRecentRedemptions(DEFAULT_PROFILE_ID, RECENT_REDEMPTION_LIMIT),
+    listBeautyEventCards(dataAccess, RECENT_EVENT_LIMIT),
   ]);
 
   return {
     // 逐项夹到 0 再相加（SQL 里完成），不会出现负数（E-05）。
     pendingCount: totals.remaining_count,
     totalSpendMinor: totals.total_amount_minor,
-    recentRedemptions: recentRows.map((row) => ({
-      id: row.id,
-      purchaseItemId: row.purchase_item_id,
-      itemName: row.item_name,
-      purchaseId: row.purchase_id,
-      purchaseName: row.purchase_name,
-      redeemedOn: row.redeemed_on,
-      institutionName: row.institution_name_snapshot,
-      city: row.city_snapshot,
-    })),
+    recentEvents,
   };
 }

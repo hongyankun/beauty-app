@@ -1,4 +1,4 @@
-import { DEFAULT_PROFILE_ID, type BusinessDate, type DataAccess } from '@/db';
+import { DEFAULT_PROFILE_ID, type BusinessDate, type DataAccess, type PurchaseKind } from '@/db';
 
 /**
  * 套餐列表查询用例。
@@ -10,9 +10,18 @@ import { DEFAULT_PROFILE_ID, type BusinessDate, type DataAccess } from '@/db';
 /** 记录页的三个筛选：全部 / 待使用 / 已完成。 */
 export type PurchaseStatusFilter = 'all' | 'pending' | 'completed';
 
+/**
+ * 购买范围（BT-0024 裁决 3、4）：「可用套餐」不含单次购买，「全部购买」含套餐与单次购买。
+ * 范围只决定**包不包含单次购买**，与剩余次数无关；是否待使用由状态筛选决定。
+ * 被删除的套餐已经不在库里，任何范围都不会出现。
+ */
+export type PurchaseScope = 'available' | 'all';
+
 export type PurchaseSummary = {
   readonly id: string;
   readonly name: string;
+  /** 套餐或单次购买；单次购买在界面上带「单次」标签 */
+  readonly purchaseKind: PurchaseKind;
   /** 录入当时的机构名称快照；未填写机构时为 null */
   readonly institutionName: string | null;
   readonly city: string | null;
@@ -40,6 +49,7 @@ export async function listPurchases(dataAccess: DataAccess): Promise<PurchaseSum
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
+    purchaseKind: row.purchase_kind,
     institutionName: row.institution_name_snapshot,
     city: row.city_snapshot,
     purchaseDate: row.purchase_date,
@@ -74,4 +84,12 @@ export function filterPurchaseSummaries(
     default:
       return [...summaries];
   }
+}
+
+/** 按购买范围筛选。「可用套餐」只排除单次购买，不看剩余次数。 */
+export function filterPurchaseScope<T extends { readonly purchaseKind: PurchaseKind }>(
+  rows: readonly T[],
+  scope: PurchaseScope,
+): T[] {
+  return scope === 'all' ? [...rows] : rows.filter((row) => row.purchaseKind === 'package');
 }

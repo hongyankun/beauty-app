@@ -100,6 +100,7 @@ export function createRedemptionRepository(db: SQLiteDatabase): RedemptionReposi
       return db.getAllAsync<RedemptionHistoryRow>(
         `SELECT
             u.id,
+            u.event_id,
             u.purchase_item_id,
             u.purchase_item_name_snapshot AS item_name,
             e.occurred_on AS redeemed_on,

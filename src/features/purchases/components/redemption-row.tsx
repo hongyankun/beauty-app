@@ -9,6 +9,8 @@ export type RedemptionRowProps = {
   redemption: PurchaseDetailRedemption;
   /** 发起撤销。只对仍然有效的记录传入 */
   onVoid: (redemption: PurchaseDetailRedemption) => void;
+  /** 进入这条使用记录所属的变美记录详情（BT-0024 裁决 8）；已撤销的记录同样可以查看 */
+  onOpenEvent: (eventId: string) => void;
 };
 
 /**
@@ -20,10 +22,13 @@ export type RedemptionRowProps = {
  *
  * 机构与城市取的是**核销当时的快照**，机构日后改名也不会改写这里（PRD-INST-005）。
  *
- * 只有有效记录才有「撤销核销」。已撤销的记录不再提供任何操作：
+ * 只有有效记录才有「撤销核销」。已撤销的记录不再提供撤销：
  * 第一版不支持恢复，也不提供删除单条核销的入口（PRD-RED-011、ADR-016）。
+ *
+ * 每条记录都有独立的次要按钮「查看这次变美」（BT-0024 裁决 8）。整行本身不可点，
+ * 两个按钮并列，互不触发；同一次变美里属于这个套餐的几条记录仍逐条显示，不折叠。
  */
-export function RedemptionRow({ redemption, onVoid }: RedemptionRowProps) {
+export function RedemptionRow({ redemption, onVoid, onOpenEvent }: RedemptionRowProps) {
   const isVoid = redemption.status === 'void';
   const voidedAt =
     redemption.voidedAt === null ? null : formatTimestampAsLocalMinute(redemption.voidedAt);
@@ -73,6 +78,13 @@ export function RedemptionRow({ redemption, onVoid }: RedemptionRowProps) {
           accessibilityLabel={`撤销核销 ${redemption.itemName}，核销日期 ${redemption.redeemedOn}`}
         />
       )}
+
+      <Button
+        label="查看这次变美"
+        variant="text"
+        onPress={() => onOpenEvent(redemption.eventId)}
+        accessibilityLabel={`查看这次变美，${redemption.itemName}，${redemption.redeemedOn}`}
+      />
     </Card>
   );
 }

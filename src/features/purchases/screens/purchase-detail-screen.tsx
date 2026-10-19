@@ -206,11 +206,18 @@ export function PurchaseDetailScreen() {
     }
   }, [dataAccess, deleteImpact, router]);
 
+  const openEvent = useCallback(
+    (eventId: string) => {
+      router.push({ pathname: '/(tabs)/records/event/[eventId]', params: { eventId } });
+    },
+    [router],
+  );
+
   const renderRedemption = useCallback(
     ({ item }: { item: PurchaseDetailRedemption }) => (
-      <RedemptionRow redemption={item} onVoid={openVoid} />
+      <RedemptionRow redemption={item} onVoid={openVoid} onOpenEvent={openEvent} />
     ),
-    [openVoid],
+    [openVoid, openEvent],
   );
 
   if (status === 'loading' && detail === null) {
@@ -294,7 +301,8 @@ export function PurchaseDetailScreen() {
               ))}
             </View>
 
-            <SectionHeader title="核销历史" />
+            {/* 引用这个套餐的使用历史，按使用记录逐条显示（IA 第 6.4 节）。 */}
+            <SectionHeader title="使用历史" />
           </View>
         }
         ListEmptyComponent={

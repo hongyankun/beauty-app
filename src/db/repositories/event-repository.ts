@@ -5,6 +5,7 @@ import type {
   EventIdCollisionRow,
   EventRepository,
   EventUsageRow,
+  EventUsageSummaryRow,
   UsageWithEventRow,
 } from './types';
 
@@ -38,6 +39,48 @@ function placeholders(count: number): string {
  */
 export function createEventRepository(db: SQLiteDatabase): EventRepository {
   return {
+    async listEvents(profileId, limit) {
+      // 排序显式到 id，不依赖 SQLite 默认顺序（DATA_MODEL_V4 第 9.2 节，BT-0024）。
+      // `LIMIT -1` 在 SQLite 中表示不限制，limit 为 null 时用它，语句只有一份。
+      return db.getAllAsync<BeautyEventRow>(
+        `SELECT ${EVENT_COLUMNS}
+           FROM beauty_events
+          WHERE profile_id = ?
+          ORDER BY occurred_on DESC, created_at DESC, id DESC
+          LIMIT ?`,
+        [profileId, limit ?? -1],
+      );
+    },
+
+    async listUsageSummaries(profileId, eventIds) {
+      // 一次取齐：变美历史取档案下全部，首页只取最近几条事件的。归属经事件的 profile_id 判断。
+      // 按事件、录入时间与 rowid 排序，摘要按「首次出现」的顺序生成时才稳定。
+      const columns = `u.id, u.event_id, u.status, u.service_name_snapshot, u.custom_name_snapshot,
+              u.purchase_item_name_snapshot`;
+      const order = `ORDER BY u.event_id ASC, u.created_at ASC, u.rowid ASC`;
+      if (eventIds === null) {
+        return db.getAllAsync<EventUsageSummaryRow>(
+          `SELECT ${columns}
+             FROM usage_records u
+             JOIN beauty_events e ON e.id = u.event_id
+            WHERE e.profile_id = ?
+            ${order}`,
+          [profileId],
+        );
+      }
+      if (eventIds.length === 0) {
+        return [];
+      }
+      return db.getAllAsync<EventUsageSummaryRow>(
+        `SELECT ${columns}
+           FROM usage_records u
+           JOIN beauty_events e ON e.id = u.event_id
+          WHERE e.profile_id = ? AND u.event_id IN (${placeholders(eventIds.length)})
+          ${order}`,
+        [profileId, ...eventIds],
+      );
+    },
+
     async findEventById(eventId) {
       const row = await db.getFirstAsync<BeautyEventRow>(
         `SELECT ${EVENT_COLUMNS} FROM beauty_events WHERE id = ? LIMIT 1`,

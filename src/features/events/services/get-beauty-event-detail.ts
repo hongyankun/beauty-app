@@ -7,6 +7,7 @@ import {
   type UsageSourceKind,
   type UtcTimestamp,
 } from '@/db';
+import { eventLocationLabel, usageServiceName } from '../event-summary';
 
 /**
  * 变美记录详情的读取用例（BT-0023 裁决 3：操作闭环所需的最小详情）。
@@ -73,16 +74,6 @@ export function describeUsageSource(
   return parts.length === 0 ? prefix : `${prefix}${parts.join(' · ')}`;
 }
 
-function locationLabel(
-  province: string | null,
-  city: string | null,
-): string | null {
-  const parts = [province, city].filter((part): part is string => part !== null && part.trim() !== '');
-  // 直辖市的省与市同名时只写一次。
-  const unique = parts.filter((part, index) => parts.indexOf(part) === index);
-  return unique.length === 0 ? null : unique.join(' · ');
-}
-
 /** 读取一条变美记录；不存在或不属于当前档案时返回 null。 */
 export async function getBeautyEventDetail(
   dataAccess: DataAccess,
@@ -98,7 +89,7 @@ export async function getBeautyEventDetail(
     return {
       id: row.id,
       sourceKind: row.source_kind,
-      serviceName: row.service_name_snapshot ?? row.custom_name_snapshot ?? row.purchase_item_name_snapshot ?? '',
+      serviceName: usageServiceName(row),
       categoryLabel: getServiceCategoryDisplayName(row.category_code_snapshot),
       sourceLabel: describeUsageSource(row),
       personName: row.person_name_snapshot,
@@ -118,7 +109,7 @@ export async function getBeautyEventDetail(
     occurredOn: event.occurred_on,
     institutionId: event.institution_id,
     institutionName: event.institution_name_snapshot,
-    locationLabel: locationLabel(event.province_name_snapshot, event.city_name_snapshot),
+    locationLabel: eventLocationLabel(event.province_name_snapshot, event.city_name_snapshot),
     notes: event.notes,
     usages,
     activeCount: usages.filter((usage) => !usage.isVoided).length,

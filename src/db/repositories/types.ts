@@ -177,6 +177,8 @@ export type PurchaseSummaryRow = {
   readonly currency: string;
   readonly expires_on: BusinessDate | null;
   readonly created_at: UtcTimestamp;
+  /** 购买类型：套餐或单次购买。记录 Tab 的「可用套餐 / 全部购买」据此筛选（BT-0024） */
+  readonly purchase_kind: PurchaseKind;
   readonly item_count: number;
   readonly total_quantity: number;
   /** 来自这个套餐的有效使用记录数（schema v4 起数 `usage_records`，字段名沿用旧名） */
@@ -310,6 +312,8 @@ export type PurchaseRepository = {
    * 同样不返回剩余次数——它由调用方按项目夹零后求和。
    */
   listDatedPurchaseItemFacts(profileId: string): Promise<DatedPurchaseItemFactRow[]>;
+  /** 项目视图的全部套餐项目事实（含单次购买），一次查询，排序见实现（BT-0024）。 */
+  listItemFacts(profileId: string): Promise<PurchaseItemFactRow[]>;
   /** 按 ID 读取单个套餐，同时校验归属于该档案；不存在时返回 null。 */
   findById(profileId: string, purchaseId: string): Promise<PurchaseRow | null>;
   /**
@@ -451,6 +455,8 @@ export type PurchaseItemContextRow = {
  */
 export type RedemptionHistoryRow = {
   readonly id: string;
+  /** 所属变美记录；套餐详情的「查看这次变美」用（BT-0024） */
+  readonly event_id: string;
   readonly purchase_item_id: string;
   readonly item_name: string;
   readonly redeemed_on: BusinessDate;
@@ -689,35 +695,11 @@ export type DashboardTotalsRow = {
 };
 
 /**
- * 首页「最近记录」里的一条有效核销。
- *
- * 只返回展示与跳转需要的列：已撤销的记录不会出现在这里，
- * 所以不带 `status`、`voided_at`，避免上层误以为还要自己过滤。
- *
- * `item_name` 与 `purchase_name` 是使用记录上的名称快照，不是项目与套餐当前的名称；
- * 来源必然是套餐或单次购买，表级 CHECK 保证两份快照非空。
+ * 首页的统计。「最近变美」自 BT-0024 起以变美记录为单位，由 `EventRepository.listEvents` 提供。
  */
-export type RecentRedemptionRow = {
-  readonly id: string;
-  readonly purchase_item_id: string;
-  readonly item_name: string;
-  readonly purchase_id: string;
-  readonly purchase_name: string;
-  readonly redeemed_on: BusinessDate;
-  readonly institution_name_snapshot: string | null;
-  readonly city_snapshot: string | null;
-};
-
 export type DashboardRepository = {
   /** 首页两张统计卡所需的三个总数，一条 SQL 聚合完成。 */
   getTotals(profileId: string): Promise<DashboardTotalsRow>;
-  /**
-   * 最近的有效使用记录，按事件日期倒序、同日按创建时间倒序，最多 `limit` 条。
-   *
-   * 只返回仍关联着套餐项目的记录：卡片要能点进套餐详情。已撤销、原套餐已删除、
-   * 外部来源与暂不关联的记录都不出现；最近变美记录的完整展示属于 BT-0024。
-   */
-  listRecentRedemptions(profileId: string, limit: number): Promise<RecentRedemptionRow[]>;
 };
 
 /** 一组绑定在同一个连接（或同一个事务）上的 repository。 */
@@ -981,7 +963,46 @@ export type EventIdCollisionRow = {
   readonly usage_records: number;
 };
 
+/**
+ * 项目视图需要的一个套餐项目的事实：项目身份、数量、有效使用数与所属购买的展示信息（BT-0024）。
+ * 剩余次数由 service 逐项夹到 0 后派生，库里没有这一列。
+ */
+export type PurchaseItemFactRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly category_code: string;
+  readonly service_code: string | null;
+  readonly custom_name: string | null;
+  readonly quantity: number;
+  readonly active_count: number;
+  readonly purchase_id: string;
+  readonly purchase_name: string;
+  readonly purchase_kind: PurchaseKind;
+  readonly purchase_date: BusinessDate;
+  readonly expires_on: BusinessDate | null;
+};
+
+/** 变美历史与首页摘要需要的一条使用记录：只取项目名称快照与状态（BT-0024）。 */
+export type EventUsageSummaryRow = {
+  readonly id: string;
+  readonly event_id: string;
+  readonly status: UsageStatus;
+  readonly service_name_snapshot: string | null;
+  readonly custom_name_snapshot: string | null;
+  readonly purchase_item_name_snapshot: string | null;
+};
+
 export type EventRepository = {
+  /**
+   * 当前档案的变美记录，按 `occurred_on` 倒序、`created_at` 倒序、`id` 倒序；`limit` 为 null 时取全部。
+   * 变美历史与首页「最近变美」共用（DATA_MODEL_V4 第 9.2 节）。
+   */
+  listEvents(profileId: string, limit: number | null): Promise<BeautyEventRow[]>;
+  /**
+   * 一组变美记录下的全部使用记录（含已撤销），按事件、录入顺序排列。`eventIds` 为 null 时取档案下全部。
+   * 一次查询取齐，不为每条事件单独查（避免 N+1）。
+   */
+  listUsageSummaries(profileId: string, eventIds: readonly string[] | null): Promise<EventUsageSummaryRow[]>;
   /**
    * 按 ID 读取变美记录，**不**按档案过滤。
    *
